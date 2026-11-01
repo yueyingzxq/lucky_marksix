@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # 香港六合彩 (Mark Six) 即时看板与真随机选号工具 - 服务器一键部署与运维脚本
-# 支持系统: Ubuntu 20.04+, Debian 11+, CentOS 8+, Rocky Linux, AlmaLinux
-# 支持自定义 HTTPS 端口 (如 8443) 与复用已有 SSL 证书 (如 cdn-cf-optimizer 证书)
+# 支持: Docker 容器化部署 (推荐) & 传统 Systemd 本机部署
+# 支持: 自定义端口 (如 8443) 与复用已有 SSL 证书 (如 cdn-cf-optimizer 证书)
 # ==============================================================================
 
 set -e
@@ -22,11 +22,10 @@ DEFAULT_FASTAPI_PORT=8000
 
 echo -e "${CYAN}${BOLD}"
 echo "=========================================================="
-echo "   🎲 香港六合彩 (Mark Six) 个人即时看板与选号工具部署脚本"
+echo "   🎲 香港六合彩 (Mark Six) 个人即时看板与选号工具部署"
 echo "=========================================================="
 echo -e "${NC}"
 
-# 权限检测
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo -e "${RED}[ERROR] 请使用 root 权限或 sudo 运行此脚本！${NC}"
@@ -35,7 +34,6 @@ check_root() {
     fi
 }
 
-# 检测包管理器
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -46,7 +44,6 @@ detect_os() {
     fi
 }
 
-# 检测端口是否被占用
 is_port_in_use() {
     local port=$1
     if command -v ss >/dev/null 2>&1; then
@@ -59,36 +56,19 @@ is_port_in_use() {
     return 1
 }
 
-# 安装基础依赖
-install_dependencies() {
-    echo -e "${BLUE}[1/5] 正在安装系统基础依赖 (Python3, Nginx, Git, Certbot)...${NC}"
-    detect_os
-    case "$OS" in
-        ubuntu|debian)
-            apt-get update -y
-            apt-get install -y python3 python3-pip python3-venv git curl nginx certbot python3-certbot-nginx
-            ;;
-        centos|rhel|rocky|almalinux)
-            yum install -y epel-release || dnf install -y epel-release || true
-            yum install -y python3 python3-pip git curl nginx certbot python3-certbot-nginx || dnf install -y python3 python3-pip git curl nginx certbot python3-certbot-nginx
-            ;;
-        *)
-            echo -e "${YELLOW}[WARN] 未知操作系统发行版: $OS，尝试通用 apt/yum...${NC}"
-            if command -v apt-get >/dev/null 2>&1; then
-                apt-get update -y && apt-get install -y python3 python3-pip python3-venv git curl nginx certbot python3-certbot-nginx
-            elif command -v dnf >/dev/null 2>&1; then
-                dnf install -y python3 python3-pip git curl nginx certbot python3-certbot-nginx
-            elif command -v yum >/dev/null 2>&1; then
-                yum install -y python3 python3-pip git curl nginx certbot python3-certbot-nginx
-            fi
-            ;;
-    esac
-    echo -e "${GREEN}[✓] 系统依赖安装完成！${NC}"
+# 停止可能存在的旧 Systemd 服务 (避免与 Docker 争抢端口)
+stop_old_systemd() {
+    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        echo -e "${YELLOW}[!] 检测到旧的 Systemd ${SERVICE_NAME} 服务正在运行，正在停止并禁用...${NC}"
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+        echo -e "${GREEN}[✓] 旧服务已释放端口。${NC}"
+    fi
 }
 
-# 配置环境与账号密码
+# 配置应用环境变量 (.env)
 setup_env() {
-    echo -e "${BLUE}[2/5] 配置应用环境变量与登录凭证...${NC}"
+    echo -e "${BLUE}[*] 配置应用环境变量与登录凭证...${NC}"
     cd "$APP_DIR"
     
     if [ ! -f .env ]; then
@@ -96,7 +76,7 @@ setup_env() {
             cp .env.example .env
         else
             cat <<EOF > .env
-HOST=127.0.0.1
+HOST=0.0.0.0
 PORT=8000
 AUTH_ENABLED=true
 AUTH_USERNAME=admin
@@ -106,61 +86,192 @@ CACHE_TTL_SECONDS=3600
 EOF
         fi
 
-        echo -e "${YELLOW}检测到首次部署，请设置后台登录凭证：${NC}"
+        echo -e "${YELLOW}请设置后台访问登录凭证：${NC}"
         read -r -p "请输入管理员用户名 (默认: admin): " INPUT_USER
         INPUT_USER=${INPUT_USER:-admin}
 
-        # 生成默认随机安全密码
         DEF_PASS=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 10)
         read -r -p "请输入管理员密码 (默认自动生成: $DEF_PASS): " INPUT_PASS
         INPUT_PASS=${INPUT_PASS:-$DEF_PASS}
 
-        # 检测本地 FastAPI 8000 端口是否被占
-        FASTAPI_PORT=$DEFAULT_FASTAPI_PORT
-        if is_port_in_use "$FASTAPI_PORT"; then
-            echo -e "${YELLOW}[!] 检测到本地 $FASTAPI_PORT 端口被占用，请指定其他本地后端端口${NC}"
-            read -r -p "请输入本地 FastAPI 端口 (推荐 8001 或 8080): " FASTAPI_PORT
-            FASTAPI_PORT=${FASTAPI_PORT:-8001}
-        fi
-
-        # 写入 .env 文件
         sed -i "s/^AUTH_USERNAME=.*/AUTH_USERNAME=$INPUT_USER/" .env || true
         sed -i "s/^AUTH_PASSWORD=.*/AUTH_PASSWORD=$INPUT_PASS/" .env || true
-        sed -i "s/^PORT=.*/PORT=$FASTAPI_PORT/" .env || true
         
-        # 确保生成唯一的 SECRET_KEY
         RAND_KEY=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
         sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$RAND_KEY/" .env || true
 
-        echo -e "${GREEN}[✓] 登录凭证与端口已配置！用户名: ${BOLD}$INPUT_USER${NC}${GREEN}，密码: ${BOLD}$INPUT_PASS${NC}，后端端口: ${BOLD}$FASTAPI_PORT${NC}"
+        echo -e "${GREEN}[✓] 登录凭证配置完毕！用户名: ${BOLD}$INPUT_USER${NC}${GREEN}，密码: ${BOLD}$INPUT_PASS${NC}"
     else
-        echo -e "${GREEN}[✓] 已存在 .env 配置文件，保留当前配置。${NC}"
+        echo -e "${GREEN}[✓] 已存在 .env 配置文件，直接读取现有配置。${NC}"
     fi
 }
 
-# 设置 Python 虚拟环境与依赖
-setup_python_venv() {
-    echo -e "${BLUE}[3/5] 构建 Python 虚拟环境并安装核心库...${NC}"
-    cd "$APP_DIR"
-    
-    if [ ! -d "venv" ]; then
-        python3 -m venv venv
+# ------------------------------------------------------------------------------
+# 路线 A: Docker 容器化部署 (用户首选)
+# ------------------------------------------------------------------------------
+deploy_docker() {
+    check_root
+    echo -e "${BLUE}==========================================================${NC}"
+    echo -e "${BLUE}        🚀 启动 Docker 容器化部署流程                     ${NC}"
+    echo -e "${BLUE}==========================================================${NC}"
+
+    # 1. 自动停止旧 Systemd 进程
+    stop_old_systemd
+
+    # 2. 检查并安装 Docker
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${YELLOW}[!] 未检测到 Docker，正在自动安装 Docker 环境...${NC}"
+        curl -fsSL https://get.docker.com | bash
+        systemctl enable --now docker
     fi
 
+    # 3. 检查 Docker Compose
+    DOCKER_COMPOSE_CMD=""
+    if docker compose version >/dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    else
+        echo -e "${YELLOW}安装 docker-compose-plugin...${NC}"
+        detect_os
+        case "$OS" in
+            ubuntu|debian) apt-get update && apt-get install -y docker-compose-plugin || true ;;
+            centos|rhel|rocky|almalinux) dnf install -y docker-compose-plugin || true ;;
+        esac
+        DOCKER_COMPOSE_CMD="docker compose"
+    fi
+
+    # 4. 配置 .env
+    setup_env
+
+    # 5. 选择网络与 SSL 模式
+    echo ""
+    echo -e "${CYAN}请选择 Docker 架构网络方案：${NC}"
+    echo -e "  ${BOLD}1)${NC} 独立 HTTPS 端口模式 (由 Docker 内置 Nginx 监听 ${BOLD}8443${NC} 并直接复用已有的 SSL 证书) ${GREEN}[推荐]${NC}"
+    echo -e "  ${BOLD}2)${NC} 仅后端容器模式 (只运行 marksix-app 监听本地 8000，由现有 cdn-cf-optimizer/Nginx 在 443 上反代)"
+    read -r -p "请输入选项 (1 或 2, 默认: 1): " DOCKER_MODE
+    DOCKER_MODE=${DOCKER_MODE:-1}
+
+    PUBLIC_IP=$(curl -s4 ifconfig.me || curl -s4 icanhazip.com || echo "your-server-ip")
+
+    if [ "$DOCKER_MODE" = "1" ]; then
+        read -r -p "请输入 Docker HTTPS 监听端口 (默认: 8443): " HTTPS_PORT
+        HTTPS_PORT=${HTTPS_PORT:-8443}
+
+        read -r -p "请输入访问域名 (如与 cdn-cf-optimizer 相同的域名): " DOMAIN_NAME
+        while [ -z "$DOMAIN_NAME" ]; do
+            read -r -p "域名不能为空，请重新输入: " DOMAIN_NAME
+        done
+
+        echo -e "${YELLOW}请提供服务器上已有的证书路径 (例如 cdn-cf-optimizer 证书)：${NC}"
+        DETECTED_CERT=$(ls -t /etc/letsencrypt/live/*/fullchain.pem 2>/dev/null | head -1 || true)
+        DETECTED_KEY=$(ls -t /etc/letsencrypt/live/*/privkey.pem 2>/dev/null | head -1 || true)
+
+        read -r -p "SSL 证书路径 fullchain.pem (默认: ${DETECTED_CERT:-/etc/letsencrypt/live/yourdomain/fullchain.pem}): " SSL_CERT
+        SSL_CERT=${SSL_CERT:-$DETECTED_CERT}
+
+        read -r -p "SSL 私钥路径 privkey.pem (默认: ${DETECTED_KEY:-/etc/letsencrypt/live/yourdomain/privkey.pem}): " SSL_KEY
+        SSL_KEY=${SSL_KEY:-$DETECTED_KEY}
+
+        # 确保证书文件存在
+        while [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; do
+            echo -e "${RED}[ERROR] 指定的证书文件或私钥不存在，请重新输入！${NC}"
+            read -r -p "SSL 证书路径: " SSL_CERT
+            read -r -p "SSL 私钥路径: " SSL_KEY
+        done
+
+        # 生成 Docker Nginx 配置
+        # 将证书所在的根目录挂载进容器
+        CERT_DIR="$(cd "$(dirname "$SSL_CERT")/../.." && pwd)"
+        if [[ "$CERT_DIR" != "/etc/letsencrypt" ]]; then
+            CERT_DIR="$(cd "$(dirname "$SSL_CERT")" && pwd)"
+        fi
+
+        # 在容器内部的路径
+        CONTAINER_CERT="$SSL_CERT"
+        CONTAINER_KEY="$SSL_KEY"
+
+        sed -e "s|__HTTPS_PORT__|$HTTPS_PORT|g" \
+            -e "s|__DOMAIN_NAME__|$DOMAIN_NAME|g" \
+            -e "s|__SSL_CERT__|$CONTAINER_CERT|g" \
+            -e "s|__SSL_KEY__|$CONTAINER_KEY|g" \
+            nginx/docker-nginx.conf.tmpl > nginx/docker-nginx.conf
+
+        export HTTPS_PORT="$HTTPS_PORT"
+        export SSL_CERTS_DIR="$CERT_DIR"
+
+        echo -e "${BLUE}[*] 正在构建并启动 Docker 容器 (含 HTTPS 反代)...${NC}"
+        $DOCKER_COMPOSE_CMD --profile ssl up -d --build
+
+        FINAL_URL="https://${DOMAIN_NAME}:${HTTPS_PORT}"
+
+        # 放行防火墙端口
+        if command -v ufw >/dev/null 2>&1 && ufw status | grep -q active; then
+            ufw allow "$HTTPS_PORT"/tcp || true
+        elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+            firewall-cmd --permanent --add-port="$HTTPS_PORT"/tcp || true
+            firewall-cmd --reload || true
+        fi
+
+    else
+        echo -e "${BLUE}[*] 正在启动仅后端容器 (端口 8000)...${NC}"
+        $DOCKER_COMPOSE_CMD up -d --build
+        FINAL_URL="http://${PUBLIC_IP}:8000"
+    fi
+
+    echo ""
+    echo -e "${GREEN}${BOLD}==========================================================${NC}"
+    echo -e "${GREEN}${BOLD}🎉 Docker 容器部署成功！${NC}"
+    echo -e "${GREEN}${BOLD}==========================================================${NC}"
+    echo -e "🌐 访问地址: ${CYAN}${BOLD}${FINAL_URL}${NC}"
+    USER=$(grep "^AUTH_USERNAME=" "$APP_DIR/.env" | cut -d '=' -f2)
+    PASS=$(grep "^AUTH_PASSWORD=" "$APP_DIR/.env" | cut -d '=' -f2)
+    echo -e "👤 登录账号: ${YELLOW}${BOLD}${USER}${NC}"
+    echo -e "🔑 登录密码: ${YELLOW}${BOLD}${PASS}${NC}"
+    echo ""
+    echo -e "${BOLD}Docker 容器维护命令：${NC}"
+    echo -e "  • 查看运行状态: ${CYAN}docker compose ps${NC}"
+    echo -e "  • 查看实时日志: ${CYAN}docker compose logs -f${NC}"
+    echo -e "  • 重启容器服务: ${CYAN}docker compose restart${NC}"
+    echo -e "  • 停止容器服务: ${CYAN}docker compose down${NC}"
+    if [ "$DOCKER_MODE" = "2" ]; then
+        echo ""
+        echo -e "${YELLOW}💡 提示：若希望通过现有的 cdn-cf-optimizer (443) 访问，只需在其 Nginx 中追加：${NC}"
+        echo -e "   location /marksix/ { proxy_pass http://127.0.0.1:8000/; }"
+    fi
+    echo -e "${GREEN}${BOLD}==========================================================${NC}"
+}
+
+# ------------------------------------------------------------------------------
+# 路线 B: 传统 Systemd 本机部署 (备用)
+# ------------------------------------------------------------------------------
+deploy_systemd() {
+    check_root
+    echo -e "${BLUE}[1/5] 安装系统依赖...${NC}"
+    detect_os
+    case "$OS" in
+        ubuntu|debian)
+            apt-get update -y && apt-get install -y python3 python3-pip python3-venv git curl nginx
+            ;;
+        centos|rhel|rocky|almalinux)
+            yum install -y epel-release || dnf install -y epel-release || true
+            yum install -y python3 python3-pip git curl nginx || dnf install -y python3 python3-pip git curl nginx
+            ;;
+    esac
+
+    setup_env
+
+    echo -e "${BLUE}[2/5] 创建 Python 虚拟环境...${NC}"
+    cd "$APP_DIR"
+    [ -d "venv" ] || python3 -m venv venv
     ./venv/bin/pip install --upgrade pip -q
     ./venv/bin/pip install -r requirements.txt -q
-    echo -e "${GREEN}[✓] Python 虚拟环境及依赖安装完毕！${NC}"
-}
 
-# 创建并启动 Systemd 服务
-setup_systemd() {
-    echo -e "${BLUE}[4/5] 注册并启动 Systemd 系统守护进程...${NC}"
-    
+    echo -e "${BLUE}[3/5] 注册 Systemd 守护进程...${NC}"
     APP_PORT=$(grep "^PORT=" "$APP_DIR/.env" | cut -d '=' -f2)
     APP_PORT=${APP_PORT:-8000}
 
-    SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    cat <<EOF > "$SERVICE_FILE"
+    cat <<EOF > "/etc/systemd/system/${SERVICE_NAME}.service"
 [Unit]
 Description=Hong Kong Mark Six Hub Dashboard Service
 After=network.target
@@ -181,266 +292,83 @@ EOF
     systemctl daemon-reload
     systemctl enable "${SERVICE_NAME}"
     systemctl restart "${SERVICE_NAME}"
-    
-    sleep 2
-    if systemctl is-active --quiet "${SERVICE_NAME}"; then
-        echo -e "${GREEN}[✓] ${SERVICE_NAME} 服务启动成功 (127.0.0.1:$APP_PORT)！${NC}"
-    else
-        echo -e "${RED}[ERROR] 服务启动失败，请检查日志: journalctl -u ${SERVICE_NAME} -n 20${NC}"
-        exit 1
-    fi
+    echo -e "${GREEN}[✓] Systemd 服务已启动在 127.0.0.1:${APP_PORT}！${NC}"
 }
 
-# 配置 Nginx 与 HTTPS (支持自定义端口与复用证书)
-setup_nginx_ssl() {
-    echo -e "${BLUE}[5/5] 配置 Nginx 反向代理与 SSL 证书...${NC}"
-
-    APP_PORT=$(grep "^PORT=" "$APP_DIR/.env" | cut -d '=' -f2)
-    APP_PORT=${APP_PORT:-8000}
-    PUBLIC_IP=$(curl -s4 ifconfig.me || curl -s4 icanhazip.com || echo "your-server-ip")
-
-    read -r -p "是否需要配置 HTTPS (SSL) 加密访问？(y/n, 默认: y): " USE_HTTPS
-    USE_HTTPS=${USE_HTTPS:-y}
-
-    if [[ "$USE_HTTPS" =~ ^[Yy]$ ]]; then
-        # 检测 443 端口是否已被别的服务(如 cdn-cf-optimizer)占用
-        DEFAULT_HTTPS_PORT=443
-        if is_port_in_use 443; then
-            echo -e "${YELLOW}[!] 检测到服务器 443 端口已被占用 (如 cdn-cf-optimizer / 现有 Web 服务)！${NC}"
-            echo -e "${CYAN}建议为六合彩看板分配独立 HTTPS 端口 (如 8443、9443 等)${NC}"
-            DEFAULT_HTTPS_PORT=8443
-        fi
-
-        read -r -p "请输入六合彩 HTTPS 监听端口 (默认: $DEFAULT_HTTPS_PORT): " HTTPS_PORT
-        HTTPS_PORT=${HTTPS_PORT:-$DEFAULT_HTTPS_PORT}
-
-        read -r -p "请输入访问域名 (如 m6.yourdomain.com 或原 cdn 域名): " DOMAIN_NAME
-        while [ -z "$DOMAIN_NAME" ]; do
-            read -r -p "域名不能为空，请重新输入: " DOMAIN_NAME
-        done
-
-        echo ""
-        echo -e "${CYAN}请选择 SSL 证书获取方式：${NC}"
-        echo -e "  ${BOLD}1)${NC} 复用服务器已有的证书 (如 cdn-cf-optimizer 的证书文件) ${GREEN}[推荐]${NC}"
-        echo -e "  ${BOLD}2)${NC} 使用 Certbot 全自动申请全新 Let's Encrypt 证书"
-        read -r -p "请输入选项 (1 或 2, 默认: 1): " CERT_MODE
-        CERT_MODE=${CERT_MODE:-1}
-
-        SSL_CERT=""
-        SSL_KEY=""
-
-        if [ "$CERT_MODE" = "1" ]; then
-            echo -e "${YELLOW}请提供已有证书与私钥路径 (以 .pem 或 .crt 结尾)：${NC}"
-            DETECTED_CERT=$(ls -t /etc/letsencrypt/live/*/fullchain.pem 2>/dev/null | head -1 || true)
-            DETECTED_KEY=$(ls -t /etc/letsencrypt/live/*/privkey.pem 2>/dev/null | head -1 || true)
-
-            read -r -p "SSL 证书路径 fullchain.pem (默认: ${DETECTED_CERT:-/etc/letsencrypt/live/yourdomain/fullchain.pem}): " SSL_CERT
-            SSL_CERT=${SSL_CERT:-$DETECTED_CERT}
-
-            read -r -p "SSL 私钥路径 privkey.pem (默认: ${DETECTED_KEY:-/etc/letsencrypt/live/yourdomain/privkey.pem}): " SSL_KEY
-            SSL_KEY=${SSL_KEY:-$DETECTED_KEY}
-
-            while [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; do
-                echo -e "${RED}[ERROR] 指定的证书文件或私钥不存在，请重新输入！${NC}"
-                read -r -p "SSL 证书路径: " SSL_CERT
-                read -r -p "SSL 私钥路径: " SSL_KEY
-            done
-            echo -e "${GREEN}[✓] 已成功载入现有证书: $SSL_CERT${NC}"
-        else
-            echo -e "${CYAN}正在调用 Certbot 申请证书...${NC}"
-            read -r -p "请输入告警通知邮箱 (直接回车跳过): " USER_EMAIL
-            if [ -n "$USER_EMAIL" ]; then
-                certbot certonly --standalone -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "$USER_EMAIL" || true
-            else
-                certbot certonly --standalone -d "$DOMAIN_NAME" --non-interactive --agree-tos --register-unsafely-without-email || true
-            fi
-            SSL_CERT="/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem"
-            SSL_KEY="/etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem"
-        fi
-
-        # 写入 Nginx 配置
-        NGINX_CONF="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
-        [ -d /etc/nginx/sites-available ] && NGINX_CONF="/etc/nginx/sites-available/${SERVICE_NAME}.conf"
-
-        cat <<EOF > "$NGINX_CONF"
-# 香港六合彩 (Mark Six) Nginx 反向代理配置 (独立端口 HTTPS)
-server {
-    listen $HTTPS_PORT ssl http2;
-    listen [::]:$HTTPS_PORT ssl http2;
-    server_name $DOMAIN_NAME;
-
-    # SSL 证书配置 (复用已有证书)
-    ssl_certificate $SSL_CERT;
-    ssl_certificate_key $SSL_KEY;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-    ssl_session_timeout 1d;
-    ssl_session_cache shared:SSL:10m;
-
-    # 安全响应头
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-Frame-Options SAMEORIGIN always;
-
-    # 开启 Gzip
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml;
-
-    location / {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-EOF
-        if [ -d /etc/nginx/sites-enabled ]; then
-            ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/${SERVICE_NAME}.conf"
-        fi
-
-        nginx -t && systemctl reload nginx
-
-        PORT_SUFFIX=""
-        [ "$HTTPS_PORT" != "443" ] && PORT_SUFFIX=":$HTTPS_PORT"
-        FINAL_URL="https://${DOMAIN_NAME}${PORT_SUFFIX}"
-
-        if [ "$HTTPS_PORT" != "443" ]; then
-            if command -v ufw >/dev/null 2>&1 && ufw status | grep -q active; then
-                ufw allow "$HTTPS_PORT"/tcp || true
-            elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-                firewall-cmd --permanent --add-port="$HTTPS_PORT"/tcp || true
-                firewall-cmd --reload || true
-            fi
-            echo -e "${YELLOW}⚠️ 重要提示：若使用的云服务器（如 Oracle Cloud 甲骨文、阿里云、腾讯云等），请务必在控制台【安全组/安全列表】中添加入站规则放行 TCP $HTTPS_PORT 端口！${NC}"
-        fi
-
-    else
-        read -r -p "请输入对外 HTTP 监听端口 (默认: 8080): " HTTP_PORT
-        HTTP_PORT=${HTTP_PORT:-8080}
-
-        NGINX_CONF="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
-        [ -d /etc/nginx/sites-available ] && NGINX_CONF="/etc/nginx/sites-available/${SERVICE_NAME}.conf"
-
-        cat <<EOF > "$NGINX_CONF"
-server {
-    listen $HTTP_PORT;
-    listen [::]:$HTTP_PORT;
-    server_name _;
-
-    location / {
-        proxy_pass http://127.0.0.1:$APP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
-        if [ -d /etc/nginx/sites-enabled ]; then
-            ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/${SERVICE_NAME}.conf"
-        fi
-
-        nginx -t && systemctl reload nginx
-        FINAL_URL="http://${PUBLIC_IP}:${HTTP_PORT}"
-    fi
-
-    echo -e "${GREEN}[✓] Nginx 代理配置完成！${NC}"
-}
-
-# 部署完成报告
-show_summary() {
-    USER=$(grep "^AUTH_USERNAME=" "$APP_DIR/.env" | cut -d '=' -f2)
-    PASS=$(grep "^AUTH_PASSWORD=" "$APP_DIR/.env" | cut -d '=' -f2)
-    APP_PORT=$(grep "^PORT=" "$APP_DIR/.env" | cut -d '=' -f2)
-
-    echo ""
-    echo -e "${GREEN}${BOLD}==========================================================${NC}"
-    echo -e "${GREEN}${BOLD}🎉 香港六合彩 (Mark Six) 个人即时看板与选号工具 部署成功！${NC}"
-    echo -e "${GREEN}${BOLD}==========================================================${NC}"
-    echo -e "🌐 访问地址: ${CYAN}${BOLD}${FINAL_URL}${NC}"
-    echo -e "👤 登录账号: ${YELLOW}${BOLD}${USER}${NC}"
-    echo -e "🔑 登录密码: ${YELLOW}${BOLD}${PASS}${NC}"
-    echo -e "📌 本地后端端口: ${BOLD}127.0.0.1:${APP_PORT:-8000}${NC}"
-    echo ""
-    echo -e "${BOLD}常用系统维护命令：${NC}"
-    echo -e "  • 重启服务:     ${CYAN}sudo systemctl restart ${SERVICE_NAME}${NC}"
-    echo -e "  • 停止服务:     ${CYAN}sudo systemctl stop ${SERVICE_NAME}${NC}"
-    echo -e "  • 查看状态:     ${CYAN}sudo systemctl status ${SERVICE_NAME}${NC}"
-    echo -e "  • 查看实时日志: ${CYAN}sudo journalctl -u ${SERVICE_NAME} -f${NC}"
-    echo -e "  • 更新最新代码: ${CYAN}sudo bash deploy.sh update${NC}"
-    echo -e "${GREEN}${BOLD}==========================================================${NC}"
-}
-
-cmd_update() {
-    check_root
-    echo -e "${BLUE}[*] 正在从 Git 仓库拉取最新代码...${NC}"
-    cd "$APP_DIR"
-    git pull
-    ./venv/bin/pip install -r requirements.txt -q
-    systemctl restart "${SERVICE_NAME}"
-    echo -e "${GREEN}[✓] 代码更新完成，服务已重启！${NC}"
-}
-
-cmd_status() {
-    systemctl status "${SERVICE_NAME}"
-}
-
-cmd_restart() {
-    check_root
-    systemctl restart "${SERVICE_NAME}"
-    systemctl reload nginx
-    echo -e "${GREEN}[✓] 服务与 Nginx 已平滑重启！${NC}"
-}
-
-cmd_stop() {
-    check_root
-    systemctl stop "${SERVICE_NAME}"
-    echo -e "${YELLOW}[!] 服务已停止${NC}"
-}
-
-cmd_docker() {
-    check_root
-    echo -e "${BLUE}[*] 使用 Docker Compose 进行容器化部署...${NC}"
-    cd "$APP_DIR"
-    if ! command -v docker >/dev/null 2>&1; then
-        echo -e "${YELLOW}未检测到 Docker，正在安装 Docker 环境...${NC}"
-        curl -fsSL https://get.docker.com | bash
-    fi
-    setup_env
-    docker compose up -d --build
-    echo -e "${GREEN}[✓] Docker 容器已启动！${NC}"
-}
-
-# 主执行入口
+# ------------------------------------------------------------------------------
+# 子命令与交互菜单
+# ------------------------------------------------------------------------------
 case "$1" in
-    update)
-        cmd_update
+    docker)
+        deploy_docker
+        ;;
+    systemd)
+        deploy_systemd
         ;;
     status)
-        cmd_status
+        if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then
+            docker compose ps
+        else
+            systemctl status "$SERVICE_NAME"
+        fi
         ;;
     restart)
-        cmd_restart
+        check_root
+        if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then
+            docker compose restart
+            echo -e "${GREEN}[✓] Docker 容器已重启！${NC}"
+        else
+            systemctl restart "$SERVICE_NAME"
+            systemctl reload nginx 2>/dev/null || true
+            echo -e "${GREEN}[✓] Systemd 服务已重启！${NC}"
+        fi
         ;;
     stop)
-        cmd_stop
+        check_root
+        if command -v docker >/dev/null 2>&1; then
+            docker compose down 2>/dev/null || true
+        fi
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        echo -e "${YELLOW}[!] 服务已停止。${NC}"
         ;;
-    docker)
-        cmd_docker
+    logs)
+        if command -v docker >/dev/null 2>&1; then
+            docker compose logs -f
+        else
+            journalctl -u "$SERVICE_NAME" -f
+        fi
+        ;;
+    update)
+        check_root
+        echo -e "${BLUE}[*] 正在拉取 GitHub 最新代码...${NC}"
+        cd "$APP_DIR"
+        git pull
+        if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then
+            docker compose up -d --build
+        else
+            ./venv/bin/pip install -r requirements.txt -q
+            systemctl restart "$SERVICE_NAME"
+        fi
+        echo -e "${GREEN}[✓] 已平滑更新至最新版本！${NC}"
         ;;
     *)
         check_root
-        install_dependencies
-        setup_env
-        setup_python_venv
-        setup_systemd
-        setup_nginx_ssl
-        show_summary
+        echo -e "${CYAN}请选择您希望使用的部署模式：${NC}"
+        echo -e "  ${BOLD}1)${NC} 🐳 ${GREEN}Docker 容器化部署 (推荐，环境隔离，一键启停)${NC}"
+        echo -e "  ${BOLD}2)${NC} ⚙️ 传统 Systemd 服务部署 (Python 虚拟环境 + 本机服务)"
+        echo -e "  ${BOLD}3)${NC} 🧹 停止并清理当前正在运行的所有实例"
+        read -r -p "请输入数字 [1-3] (默认: 1): " CHOICE
+        CHOICE=${CHOICE:-1}
+
+        case "$CHOICE" in
+            1) deploy_docker ;;
+            2) deploy_systemd ;;
+            3)
+                stop_old_systemd
+                docker compose down 2>/dev/null || true
+                echo -e "${GREEN}[✓] 清理完成！${NC}"
+                ;;
+            *) deploy_docker ;;
+        esac
         ;;
 esac

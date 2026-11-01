@@ -1,11 +1,32 @@
 version: '3.8'
 
 services:
+  # 核心 FastAPI 选号与看板后端容器
   marksix-app:
     build: .
     container_name: marksix-app
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     env_file:
       - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+
+  # 独立 HTTPS 反向代理容器 (监听自定义端口 8443 并复用宿主机现有证书)
+  # 启动命令: docker compose --profile ssl up -d --build
+  marksix-nginx:
+    image: nginx:alpine
+    container_name: marksix-nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTPS_PORT:-8443}:${HTTPS_PORT:-8443}"
+    volumes:
+      - ./nginx/docker-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${SSL_CERTS_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
+    depends_on:
+      - marksix-app
+    profiles:
+      - ssl
+      - all

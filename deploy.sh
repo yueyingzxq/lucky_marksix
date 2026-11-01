@@ -2,7 +2,7 @@
 # ==============================================================================
 # 香港六合彩 (Mark Six) 即时看板与真随机选号工具 - 服务器一键部署与运维脚本
 # 支持: Docker 容器化部署 (推荐) & 传统 Systemd 本机部署
-# 支持: 自定义端口 (如 8443) 与复用已有 SSL 证书 (如 cdn-cf-optimizer 证书)
+# 智能特性: 全自动深度探测宿主机/Docker (Caddy/Certbot/acme.sh) SSL 证书与域名
 # ==============================================================================
 
 set -e
@@ -18,7 +18,6 @@ NC='\033[0m' # No Color
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="marksix"
-DEFAULT_FASTAPI_PORT=8000
 
 echo -e "${CYAN}${BOLD}"
 echo "=========================================================="
@@ -66,6 +65,82 @@ stop_old_systemd() {
     fi
 }
 
+# 全自动深度扫描探测服务器已有 SSL 证书 (包含 Docker Caddy/Nginx卷, Certbot, acme.sh)
+auto_detect_certificates() {
+    echo -e "${BLUE}[*] 正在全盘深度探测服务器上已有的 SSL 证书 (含 Docker Caddy/Certbot)...${NC}"
+    
+    DETECTED_CERTS=()
+    DETECTED_KEYS=()
+    DETECTED_DOMAINS=()
+
+    # 1. 扫描 Docker 命名数据卷 (例如 cdn-cf-optimizer 的 caddy_data 数据卷)
+    if [ -d "/var/lib/docker/volumes" ]; then
+        while IFS= read -r cert; do
+            dir=$(dirname "$cert")
+            key=$(find "$dir" -maxdepth 1 -name "*.key" 2>/dev/null | head -1 || true)
+            if [ -n "$key" ] && [ -f "$key" ]; then
+                DETECTED_CERTS+=("$cert")
+                DETECTED_KEYS+=("$key")
+                # 尝试从证书读取域名
+                domain=""
+                if command -v openssl >/dev/null 2>&1; then
+                    domain=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -o 'DNS:[^, ]*' | head -1 | cut -d':' -f2 || true)
+                fi
+                [ -z "$domain" ] && domain=$(basename "$cert" .crt)
+                DETECTED_DOMAINS+=("$domain")
+            fi
+        done < <(find /var/lib/docker/volumes -type f \( -name "*.crt" -o -name "fullchain.pem" \) 2>/dev/null)
+    fi
+
+    # 2. 扫描 Let's Encrypt / Certbot 官方默认路径
+    if [ -d "/etc/letsencrypt/live" ]; then
+        for cert in /etc/letsencrypt/live/*/fullchain.pem; do
+            if [ -f "$cert" ]; then
+                dir=$(dirname "$cert")
+                key="$dir/privkey.pem"
+                if [ -f "$key" ]; then
+                    DETECTED_CERTS+=("$cert")
+                    DETECTED_KEYS+=("$key")
+                    domain=$(basename "$dir")
+                    DETECTED_DOMAINS+=("$domain")
+                fi
+            fi
+        done
+    fi
+
+    # 3. 扫描本机 Caddy 路径
+    for caddy_dir in /var/lib/caddy/.local/share/caddy/certificates ~/.local/share/caddy/certificates; do
+        if [ -d "$caddy_dir" ]; then
+            while IFS= read -r cert; do
+                dir=$(dirname "$cert")
+                key=$(find "$dir" -maxdepth 1 -name "*.key" 2>/dev/null | head -1 || true)
+                if [ -n "$key" ] && [ -f "$key" ]; then
+                    DETECTED_CERTS+=("$cert")
+                    DETECTED_KEYS+=("$key")
+                    domain=$(basename "$cert" .crt)
+                    DETECTED_DOMAINS+=("$domain")
+                fi
+            done < <(find "$caddy_dir" -type f -name "*.crt" 2>/dev/null)
+        fi
+    done
+
+    # 4. 扫描 acme.sh 路径
+    if [ -d "$HOME/.acme.sh" ]; then
+        for cert in "$HOME/.acme.sh"/*/*.cer; do
+            if [ -f "$cert" ] && [[ "$cert" != *"ca.cer"* ]]; then
+                dir=$(dirname "$cert")
+                key=$(find "$dir" -maxdepth 1 -name "*.key" 2>/dev/null | head -1 || true)
+                if [ -n "$key" ] && [ -f "$key" ]; then
+                    DETECTED_CERTS+=("$cert")
+                    DETECTED_KEYS+=("$key")
+                    domain=$(basename "$dir")
+                    DETECTED_DOMAINS+=("$domain")
+                fi
+            fi
+        done
+    fi
+}
+
 # 配置应用环境变量 (.env)
 setup_env() {
     echo -e "${BLUE}[*] 配置应用环境变量与登录凭证...${NC}"
@@ -107,7 +182,7 @@ EOF
 }
 
 # ------------------------------------------------------------------------------
-# 路线 A: Docker 容器化部署 (用户首选)
+# 路线 A: Docker 容器化部署
 # ------------------------------------------------------------------------------
 deploy_docker() {
     check_root
@@ -144,11 +219,13 @@ deploy_docker() {
     # 4. 配置 .env
     setup_env
 
-    # 5. 选择网络与 SSL 模式
+    # 5. 自动探测已有证书
+    auto_detect_certificates
+
     echo ""
     echo -e "${CYAN}请选择 Docker 架构网络方案：${NC}"
-    echo -e "  ${BOLD}1)${NC} 独立 HTTPS 端口模式 (由 Docker 内置 Nginx 监听 ${BOLD}8443${NC} 并直接复用已有的 SSL 证书) ${GREEN}[推荐]${NC}"
-    echo -e "  ${BOLD}2)${NC} 仅后端容器模式 (只运行 marksix-app 监听本地 8000，由现有 cdn-cf-optimizer/Nginx 在 443 上反代)"
+    echo -e "  ${BOLD}1)${NC} 独立 HTTPS 端口模式 (由 Docker 监听 ${BOLD}8443${NC} 并自动复用已有 SSL 证书) ${GREEN}[推荐]${NC}"
+    echo -e "  ${BOLD}2)${NC} 仅后端容器模式 (只运行 marksix-app 监听本地 8000，由现有 cdn-cf-optimizer 反代)"
     read -r -p "请输入选项 (1 或 2, 默认: 1): " DOCKER_MODE
     DOCKER_MODE=${DOCKER_MODE:-1}
 
@@ -158,54 +235,56 @@ deploy_docker() {
         read -r -p "请输入 Docker HTTPS 监听端口 (默认: 8443): " HTTPS_PORT
         HTTPS_PORT=${HTTPS_PORT:-8443}
 
-        read -r -p "请输入访问域名 (如与 cdn-cf-optimizer 相同的域名): " DOMAIN_NAME
-        while [ -z "$DOMAIN_NAME" ]; do
-            read -r -p "域名不能为空，请重新输入: " DOMAIN_NAME
-        done
+        CHOSEN_CERT=""
+        CHOSEN_KEY=""
+        CHOSEN_DOMAIN=""
 
-        echo -e "${YELLOW}请提供服务器上已有的证书路径 (例如 cdn-cf-optimizer 证书)：${NC}"
-        DETECTED_CERT=$(ls -t /etc/letsencrypt/live/*/fullchain.pem 2>/dev/null | head -1 || true)
-        DETECTED_KEY=$(ls -t /etc/letsencrypt/live/*/privkey.pem 2>/dev/null | head -1 || true)
+        NUM_CERTS=${#DETECTED_CERTS[@]}
+        if [ "$NUM_CERTS" -gt 0 ]; then
+            echo -e "${GREEN}${BOLD}[✓] 自动探测到服务器上已有 $NUM_CERTS 处可用证书：${NC}"
+            for i in "${!DETECTED_CERTS[@]}"; do
+                echo -e "  ${BOLD}$((i+1)))${NC} 域名: ${CYAN}${DETECTED_DOMAINS[$i]}${NC}"
+                echo -e "      证书: ${DETECTED_CERTS[$i]}"
+            done
 
-        read -r -p "SSL 证书路径 fullchain.pem (默认: ${DETECTED_CERT:-/etc/letsencrypt/live/yourdomain/fullchain.pem}): " SSL_CERT
-        SSL_CERT=${SSL_CERT:-$DETECTED_CERT}
+            read -r -p "请选择要复用的证书编号 [1-$NUM_CERTS] (默认: 1): " CERT_INDEX
+            CERT_INDEX=${CERT_INDEX:-1}
+            idx=$((CERT_INDEX - 1))
 
-        read -r -p "SSL 私钥路径 privkey.pem (默认: ${DETECTED_KEY:-/etc/letsencrypt/live/yourdomain/privkey.pem}): " SSL_KEY
-        SSL_KEY=${SSL_KEY:-$DETECTED_KEY}
+            CHOSEN_CERT="${DETECTED_CERTS[$idx]}"
+            CHOSEN_KEY="${DETECTED_KEYS[$idx]}"
+            CHOSEN_DOMAIN="${DETECTED_DOMAINS[$idx]}"
 
-        # 确保证书文件存在
-        while [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; do
-            echo -e "${RED}[ERROR] 指定的证书文件或私钥不存在，请重新输入！${NC}"
-            read -r -p "SSL 证书路径: " SSL_CERT
-            read -r -p "SSL 私钥路径: " SSL_KEY
-        done
-
-        # 生成 Docker Nginx 配置
-        # 将证书所在的根目录挂载进容器
-        CERT_DIR="$(cd "$(dirname "$SSL_CERT")/../.." && pwd)"
-        if [[ "$CERT_DIR" != "/etc/letsencrypt" ]]; then
-            CERT_DIR="$(cd "$(dirname "$SSL_CERT")" && pwd)"
+            echo -e "${GREEN}[✓] 已选定证书: $CHOSEN_CERT${NC}"
+            echo -e "${GREEN}[✓] 自动匹配域名: ${BOLD}$CHOSEN_DOMAIN${NC}"
+        else
+            echo -e "${YELLOW}[!] 未能自动检索到现有证书，请手动输入：${NC}"
+            read -r -p "请输入访问域名: " CHOSEN_DOMAIN
+            read -r -p "请输入 fullchain.pem/crt 完整路径: " CHOSEN_CERT
+            read -r -p "请输入 privkey.pem/key 完整路径: " CHOSEN_KEY
         fi
 
-        # 在容器内部的路径
-        CONTAINER_CERT="$SSL_CERT"
-        CONTAINER_KEY="$SSL_KEY"
+        # 挂载目录与文件名准备
+        CERT_DIR="$(cd "$(dirname "$CHOSEN_CERT")" && pwd)"
+        CERT_FILE="$(basename "$CHOSEN_CERT")"
+        KEY_FILE="$(basename "$CHOSEN_KEY")"
 
+        # 生成 Docker Nginx 配置文件
         sed -e "s|__HTTPS_PORT__|$HTTPS_PORT|g" \
-            -e "s|__DOMAIN_NAME__|$DOMAIN_NAME|g" \
-            -e "s|__SSL_CERT__|$CONTAINER_CERT|g" \
-            -e "s|__SSL_KEY__|$CONTAINER_KEY|g" \
+            -e "s|__DOMAIN_NAME__|$CHOSEN_DOMAIN|g" \
+            -e "s|__SSL_CERT__|/etc/nginx/ssl/$CERT_FILE|g" \
+            -e "s|__SSL_KEY__|/etc/nginx/ssl/$KEY_FILE|g" \
             nginx/docker-nginx.conf.tmpl > nginx/docker-nginx.conf
 
         export HTTPS_PORT="$HTTPS_PORT"
         export SSL_CERTS_DIR="$CERT_DIR"
 
-        echo -e "${BLUE}[*] 正在构建并启动 Docker 容器 (含 HTTPS 反代)...${NC}"
+        echo -e "${BLUE}[*] 正在构建并启动 Docker 容器 (FastAPI + Nginx HTTPS 8443)...${NC}"
         $DOCKER_COMPOSE_CMD --profile ssl up -d --build
 
-        FINAL_URL="https://${DOMAIN_NAME}:${HTTPS_PORT}"
+        FINAL_URL="https://${CHOSEN_DOMAIN}:${HTTPS_PORT}"
 
-        # 放行防火墙端口
+        # 防火墙放行
         if command -v ufw >/dev/null 2>&1 && ufw status | grep -q active; then
             ufw allow "$HTTPS_PORT"/tcp || true
         elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
@@ -234,9 +313,12 @@ deploy_docker() {
     echo -e "  • 查看实时日志: ${CYAN}docker compose logs -f${NC}"
     echo -e "  • 重启容器服务: ${CYAN}docker compose restart${NC}"
     echo -e "  • 停止容器服务: ${CYAN}docker compose down${NC}"
-    if [ "$DOCKER_MODE" = "2" ]; then
+    if [ "$DOCKER_MODE" = "1" ]; then
         echo ""
-        echo -e "${YELLOW}💡 提示：若希望通过现有的 cdn-cf-optimizer (443) 访问，只需在其 Nginx 中追加：${NC}"
+        echo -e "${YELLOW}⚠️ 重要提示：若为云服务器 (如甲骨文 Oracle Cloud/阿里云/腾讯云)，请务必在控制台【安全组/安全列表】添加入站规则放行 TCP $HTTPS_PORT 端口！${NC}"
+    else
+        echo ""
+        echo -e "${YELLOW}💡 提示：若希望通过现有的 cdn-cf-optimizer (443) 访问，只需在其 Caddyfile/Nginx 中追加：${NC}"
         echo -e "   location /marksix/ { proxy_pass http://127.0.0.1:8000/; }"
     fi
     echo -e "${GREEN}${BOLD}==========================================================${NC}"

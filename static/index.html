@@ -256,7 +256,7 @@
       </div>
     </section>
 
-    <!-- 卡片 2 (核心新增): 上期搅珠详情与派彩明细 (对应官网第一张图) -->
+    <!-- 卡片 2: 上期搅珠详情与派彩明细 (对应官网第一张图) -->
     <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
       <div class="border-b border-slate-800/80 pb-3 sm:pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
         <div class="flex items-center space-x-2">
@@ -305,22 +305,25 @@
       </div>
     </section>
 
-    <!-- 卡片 3 (扩展特性): 往期搅珠历史回顾 (近 10 期开奖走势) -->
+    <!-- 卡片 3: 往期搅珠历史 (默认收起派彩明细，点击任意一期展开完整派彩明细) -->
     <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
       <div class="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/80">
         <div class="flex items-center space-x-2">
           <span class="text-base sm:text-lg">📜</span>
-          <h2 class="text-sm sm:text-lg font-bold text-white">往期搅珠历史 (近 10 期开奖记录)</h2>
+          <h2 class="text-sm sm:text-lg font-bold text-white flex items-center gap-1.5">
+            往期搅珠历史 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(近 10 期记录)</span>
+          </h2>
         </div>
-        <button onclick="toggleHistoryView()" id="historyToggleBtn" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1 py-1 px-2 rounded-lg bg-amber-500/10 border border-amber-500/20 active:scale-95 transition-all">
-          <span id="historyToggleText">展开查阅</span>
-          <svg id="historyToggleIcon" class="w-3.5 h-3.5 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+        <!-- 全部展开/全部收起主控制按钮 -->
+        <button onclick="toggleAllHistoryPrizes()" id="masterToggleHistoryBtn" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1 py-1 px-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 active:scale-95 transition-all">
+          <span id="masterToggleHistoryText">全部展开明细</span>
+          <svg id="masterToggleHistoryIcon" class="w-3.5 h-3.5 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
         </button>
       </div>
 
-      <!-- 历史开奖列表 (可折叠) -->
-      <div id="historyContainer" class="hidden mt-4 space-y-3 transition-all duration-300">
-        <!-- 动态装载历史 10 期记录 -->
+      <!-- 历史开奖列表容器：默认展示各期紧凑行，派彩表格默认折叠 -->
+      <div id="historyContainer" class="mt-4 space-y-3">
+        <!-- 动态装载历史 10 期记录与折叠派彩 -->
       </div>
     </section>
 
@@ -458,7 +461,7 @@
       username: localStorage.getItem('marksix_username') || '',
       currentBets: [],
       betCount: 3,
-      historyExpanded: false
+      historyData: []
     };
 
     function updateClock() {
@@ -605,6 +608,51 @@
       return `<div class="ball-3d ball-${ball.color} ${sizeClass}" title="${ball.color === 'red' ? '红波' : (ball.color === 'blue' ? '蓝波' : '绿波')}">${ball.text}</div>`;
     }
 
+    // 生成奖项派彩表格 HTML 模板 (通用复用函数)
+    function generatePrizeTableHTML(prizes) {
+      if (!prizes || prizes.length === 0) {
+        return '<div class="py-3 text-center text-slate-500 text-xs">暂无官方派彩数据</div>';
+      }
+
+      let rowsHtml = '';
+      prizes.forEach(p => {
+        const isTop3 = p.is_floating;
+        const nameBadgeColor = isTop3 ? 'text-amber-400 font-bold' : 'text-slate-300';
+        const dividendColor = p.dividend !== '-' ? (isTop3 ? 'text-amber-400 font-bold' : 'text-slate-200') : 'text-slate-500';
+        const unitsColor = p.winning_units !== '-' ? 'text-slate-200' : 'text-slate-500';
+
+        rowsHtml += `
+          <tr class="hover:bg-slate-800/40 transition-colors">
+            <td class="py-2 px-3 sm:px-4">
+              <span class="${nameBadgeColor} flex items-center gap-1.5">
+                ${isTop3 ? '<span class="text-amber-400 text-xs">★</span>' : ''}
+                ${p.name}
+              </span>
+            </td>
+            <td class="py-2 px-3 sm:px-4 ${dividendColor}">${p.dividend}</td>
+            <td class="py-2 px-3 sm:px-4 text-right ${unitsColor}">${p.winning_units}</td>
+          </tr>
+        `;
+      });
+
+      return `
+        <div class="overflow-x-auto rounded-lg border border-slate-800/80 bg-slate-900/80 mt-1">
+          <table class="w-full text-left text-xs sm:text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-950/60 text-[11px] sm:text-xs text-slate-400 uppercase font-semibold">
+                <th class="py-2 px-3 sm:px-4">奖项</th>
+                <th class="py-2 px-3 sm:px-4">每注奖金 (每注 $10)</th>
+                <th class="py-2 px-3 sm:px-4 text-right">中奖注数</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60 font-mono">
+              ${rowsHtml}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
     // 获取并更新大盘、上期详情及历史
     async function loadJackpotInfo(forceRefresh = false) {
       const refreshIcon = document.getElementById('refreshIcon');
@@ -648,7 +696,6 @@
             document.getElementById('pastDrawDateVal').innerText = past.draw_date || '--';
             document.getElementById('pastTotalInvestVal').innerText = past.total_investment || '--';
 
-            // 渲染 6+1 开奖球
             let ballsHtml = '';
             (past.numbers || []).forEach(b => {
               ballsHtml += createBallHTML(b);
@@ -659,12 +706,36 @@
             }
             document.getElementById('pastDrawnBallsContainer').innerHTML = ballsHtml;
 
-            // 渲染 1至7 奖项派彩表格
-            renderPrizeTable(past.prizes || []);
+            // 渲染上期派彩表格
+            const prizeTableContainer = document.getElementById('prizesTableBody');
+            if (prizeTableContainer && past.prizes) {
+              let rows = '';
+              past.prizes.forEach(p => {
+                const isTop3 = p.is_floating;
+                const nameBadgeColor = isTop3 ? 'text-amber-400 font-bold' : 'text-slate-300';
+                const dividendColor = p.dividend !== '-' ? (isTop3 ? 'text-amber-400 font-bold' : 'text-slate-200') : 'text-slate-500';
+                const unitsColor = p.winning_units !== '-' ? 'text-slate-200' : 'text-slate-500';
+
+                rows += `
+                  <tr class="hover:bg-slate-800/40 transition-colors">
+                    <td class="py-2.5 px-3 sm:px-4">
+                      <span class="${nameBadgeColor} flex items-center gap-1.5">
+                        ${isTop3 ? '<span class="text-amber-400 text-xs">★</span>' : ''}
+                        ${p.name}
+                      </span>
+                    </td>
+                    <td class="py-2.5 px-3 sm:px-4 ${dividendColor}">${p.dividend}</td>
+                    <td class="py-2.5 px-3 sm:px-4 text-right ${unitsColor}">${p.winning_units}</td>
+                  </tr>
+                `;
+              });
+              prizeTableContainer.innerHTML = rows;
+            }
           }
 
-          // 3. 卡片 3: 往期 10 期历史列表
+          // 3. 卡片 3: 往期 10 期历史列表 (默认收起派彩详情)
           if (d.history && d.history.length > 0) {
+            state.historyData = d.history;
             renderHistoryList(d.history);
           }
 
@@ -677,38 +748,7 @@
       }
     }
 
-    // 渲染奖项表格
-    function renderPrizeTable(prizes) {
-      const tbody = document.getElementById('prizesTableBody');
-      if (!prizes || prizes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" class="py-4 text-center text-slate-500">暂无派彩记录</td></tr>';
-        return;
-      }
-
-      let html = '';
-      prizes.forEach(p => {
-        const isTop3 = p.is_floating;
-        const nameBadgeColor = isTop3 ? 'text-amber-400 font-bold' : 'text-slate-300';
-        const dividendColor = p.dividend !== '-' ? (isTop3 ? 'text-amber-400 font-bold' : 'text-slate-200') : 'text-slate-500';
-        const unitsColor = p.winning_units !== '-' ? 'text-slate-200' : 'text-slate-500';
-
-        html += `
-          <tr class="hover:bg-slate-800/40 transition-colors">
-            <td class="py-2.5 px-3 sm:px-4">
-              <span class="${nameBadgeColor} flex items-center gap-1.5">
-                ${isTop3 ? '<span class="text-amber-400 text-xs">★</span>' : ''}
-                ${p.name}
-              </span>
-            </td>
-            <td class="py-2.5 px-3 sm:px-4 ${dividendColor}">${p.dividend}</td>
-            <td class="py-2.5 px-3 sm:px-4 text-right ${unitsColor}">${p.winning_units}</td>
-          </tr>
-        `;
-      });
-      tbody.innerHTML = html;
-    }
-
-    // 渲染往期 10 期历史列表
+    // 渲染往期 10 期历史列表 (每项默认折叠派彩明细)
     function renderHistoryList(history) {
       const container = document.getElementById('historyContainer');
       let html = '';
@@ -724,23 +764,43 @@
         }
 
         html += `
-          <div class="bg-slate-900/60 hover:bg-slate-900/90 border border-slate-800/80 rounded-xl p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-2.5 transition-all">
-            <div class="flex items-center space-x-3 justify-between sm:justify-start">
-              <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-300 border border-slate-700/60">
-                ${item.draw_number}
-              </span>
-              <span class="text-xs text-slate-400 font-mono">${item.draw_date}</span>
-              <span class="text-xs text-slate-500 hidden sm:inline">投注额: ${item.total_investment}</span>
+          <div class="bg-slate-900/60 hover:bg-slate-900/90 border border-slate-800/80 rounded-xl overflow-hidden transition-all duration-200">
+            <!-- 概要点击栏 (默认展示，点击展开/折叠该期派彩表格) -->
+            <div onclick="toggleHistoryPrize(${index})" class="p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-2.5 cursor-pointer select-none group">
+              <!-- 左侧：期数与日期 -->
+              <div class="flex items-center space-x-2 sm:space-x-3 justify-between sm:justify-start">
+                <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-300 border border-slate-700/60 group-hover:border-amber-500/40 transition-colors">
+                  第 ${item.draw_number} 期
+                </span>
+                <span class="text-xs text-slate-400 font-mono">${item.draw_date}</span>
+                <span class="text-xs text-slate-500 hidden sm:inline">总投注额: <strong class="text-slate-300 font-mono">${item.total_investment}</strong></span>
+              </div>
+
+              <!-- 中间：开奖球号 -->
+              <div class="flex items-center space-x-1.5 xs:space-x-2 overflow-x-auto py-0.5">
+                ${ballsHtml}
+              </div>
+
+              <!-- 右侧：查看派彩操作按钮与箭头指示 -->
+              <div class="flex items-center justify-between sm:justify-end text-xs text-amber-400/90 font-medium pt-1.5 sm:pt-0 border-t border-slate-800/60 sm:border-0">
+                <span class="sm:hidden text-[11px] text-slate-500">投注额: <strong class="text-slate-300 font-mono">${item.total_investment}</strong></span>
+                <div class="flex items-center space-x-1 group-hover:text-amber-300 transition-colors">
+                  <span id="historyPrizeBtnText-${index}">查看派彩</span>
+                  <svg id="historyPrizeIcon-${index}" class="w-3.5 h-3.5 transition-transform duration-300 transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </div>
+              </div>
             </div>
 
-            <!-- 开奖球号 -->
-            <div class="flex items-center space-x-1.5 xs:space-x-2 overflow-x-auto py-0.5">
-              ${ballsHtml}
-            </div>
-
-            <!-- 头奖概要 -->
-            <div class="text-right text-xs text-slate-400 hidden lg:block min-w-[140px]">
-              头奖: <span class="font-mono text-amber-300/90">${item.first_prize_summary}</span>
+            <!-- 详细派彩面板 (默认收起 hidden) -->
+            <div id="historyPrizePanel-${index}" class="hidden px-3 sm:px-4 pb-3 sm:pb-4 pt-1.5 border-t border-slate-800/60 bg-slate-950/40 space-y-2">
+              <div class="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                <span>第 ${item.draw_number} 期总投注额: <strong class="text-amber-400 font-mono">${item.total_investment}</strong></span>
+                <span class="text-slate-500">官方奖项派彩明细 (头奖至七奖)</span>
+              </div>
+              <!-- 完整派彩表格 -->
+              ${generatePrizeTableHTML(item.prizes)}
             </div>
           </div>
         `;
@@ -749,20 +809,56 @@
       container.innerHTML = html;
     }
 
-    function toggleHistoryView() {
-      state.historyExpanded = !state.historyExpanded;
-      const container = document.getElementById('historyContainer');
-      const text = document.getElementById('historyToggleText');
-      const icon = document.getElementById('historyToggleIcon');
+    // 单项展开/折叠派彩表格
+    function toggleHistoryPrize(index) {
+      const panel = document.getElementById(`historyPrizePanel-${index}`);
+      const text = document.getElementById(`historyPrizeBtnText-${index}`);
+      const icon = document.getElementById(`historyPrizeIcon-${index}`);
+      if (!panel) return;
 
-      if (state.historyExpanded) {
-        container.classList.remove('hidden');
-        text.innerText = '收起列表';
-        icon.classList.add('rotate-180');
+      const isHidden = panel.classList.contains('hidden');
+      if (isHidden) {
+        panel.classList.remove('hidden');
+        if (text) text.innerText = '收起派彩';
+        if (icon) icon.classList.add('rotate-180');
       } else {
-        container.classList.add('hidden');
-        text.innerText = '展开查阅';
-        icon.classList.remove('rotate-180');
+        panel.classList.add('hidden');
+        if (text) text.innerText = '查看派彩';
+        if (icon) icon.classList.remove('rotate-180');
+      }
+    }
+
+    // 全部展开/全部收起主控制
+    let isMasterHistoryExpanded = false;
+    function toggleAllHistoryPrizes() {
+      isMasterHistoryExpanded = !isMasterHistoryExpanded;
+      const count = state.historyData ? state.historyData.length : 10;
+      
+      for (let i = 0; i < count; i++) {
+        const panel = document.getElementById(`historyPrizePanel-${i}`);
+        const text = document.getElementById(`historyPrizeBtnText-${i}`);
+        const icon = document.getElementById(`historyPrizeIcon-${i}`);
+        if (panel) {
+          if (isMasterHistoryExpanded) {
+            panel.classList.remove('hidden');
+            if (text) text.innerText = '收起派彩';
+            if (icon) icon.classList.add('rotate-180');
+          } else {
+            panel.classList.add('hidden');
+            if (text) text.innerText = '查看派彩';
+            if (icon) icon.classList.remove('rotate-180');
+          }
+        }
+      }
+
+      const masterText = document.getElementById('masterToggleHistoryText');
+      const masterIcon = document.getElementById('masterToggleHistoryIcon');
+      if (masterText) {
+        masterText.innerText = isMasterHistoryExpanded ? '全部收起明细' : '全部展开明细';
+      }
+      if (masterIcon) {
+        if (isMasterHistoryExpanded) masterIcon.classList.add('rotate-180');
+        else masterIcon.classList.remove('rotate-180');
       }
     }
 

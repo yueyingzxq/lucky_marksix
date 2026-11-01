@@ -2,6 +2,7 @@
 # ==============================================================================
 # 香港六合彩 (Mark Six) 即时看板与真随机选号工具 - 服务器一键部署与运维脚本
 # 支持系统: Ubuntu 20.04+, Debian 11+, CentOS 8+, Rocky Linux, AlmaLinux
+# 支持自定义 HTTPS 端口 (如 8443) 与复用已有 SSL 证书 (如 cdn-cf-optimizer 证书)
 # ==============================================================================
 
 set -e
@@ -17,7 +18,7 @@ NC='\033[0m' # No Color
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="marksix"
-DEFAULT_PORT=8000
+DEFAULT_FASTAPI_PORT=8000
 
 echo -e "${CYAN}${BOLD}"
 echo "=========================================================="
@@ -43,6 +44,19 @@ detect_os() {
         echo -e "${RED}[ERROR] 无法识别当前操作系统！${NC}"
         exit 1
     fi
+}
+
+# 检测端口是否被占用
+is_port_in_use() {
+    local port=$1
+    if command -v ss >/dev/null 2>&1; then
+        ss -tuln | grep -q ":${port} " && return 0
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -tuln | grep -q ":${port} " && return 0
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -i ":${port}" >/dev/null 2>&1 && return 0
+    fi
+    return 1
 }
 
 # 安装基础依赖
@@ -101,15 +115,24 @@ EOF
         read -r -p "请输入管理员密码 (默认自动生成: $DEF_PASS): " INPUT_PASS
         INPUT_PASS=${INPUT_PASS:-$DEF_PASS}
 
+        # 检测本地 FastAPI 8000 端口是否被占
+        FASTAPI_PORT=$DEFAULT_FASTAPI_PORT
+        if is_port_in_use "$FASTAPI_PORT"; then
+            echo -e "${YELLOW}[!] 检测到本地 $FASTAPI_PORT 端口被占用，请指定其他本地后端端口${NC}"
+            read -r -p "请输入本地 FastAPI 端口 (推荐 8001 或 8080): " FASTAPI_PORT
+            FASTAPI_PORT=${FASTAPI_PORT:-8001}
+        fi
+
         # 写入 .env 文件
         sed -i "s/^AUTH_USERNAME=.*/AUTH_USERNAME=$INPUT_USER/" .env || true
         sed -i "s/^AUTH_PASSWORD=.*/AUTH_PASSWORD=$INPUT_PASS/" .env || true
+        sed -i "s/^PORT=.*/PORT=$FASTAPI_PORT/" .env || true
         
         # 确保生成唯一的 SECRET_KEY
         RAND_KEY=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
         sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$RAND_KEY/" .env || true
 
-        echo -e "${GREEN}[✓] 登录凭证已配置！用户名: ${BOLD}$INPUT_USER${NC}${GREEN}，密码: ${BOLD}$INPUT_PASS${NC}"
+        echo -e "${GREEN}[✓] 登录凭证与端口已配置！用户名: ${BOLD}$INPUT_USER${NC}${GREEN}，密码: ${BOLD}$INPUT_PASS${NC}，后端端口: ${BOLD}$FASTAPI_PORT${NC}"
     else
         echo -e "${GREEN}[✓] 已存在 .env 配置文件，保留当前配置。${NC}"
     fi
@@ -133,6 +156,9 @@ setup_python_venv() {
 setup_systemd() {
     echo -e "${BLUE}[4/5] 注册并启动 Systemd 系统守护进程...${NC}"
     
+    APP_PORT=$(grep "^PORT=" "$APP_DIR/.env" | cut -d '=' -f2)
+    APP_PORT=${APP_PORT:-8000}
+
     SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
     cat <<EOF > "$SERVICE_FILE"
 [Unit]
@@ -143,7 +169,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$APP_DIR
-ExecStart=$APP_DIR/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8000 --workers 2
+ExecStart=$APP_DIR/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port $APP_PORT --workers 2
 Restart=always
 RestartSec=3
 EnvironmentFile=$APP_DIR/.env
@@ -158,40 +184,111 @@ EOF
     
     sleep 2
     if systemctl is-active --quiet "${SERVICE_NAME}"; then
-        echo -e "${GREEN}[✓] ${SERVICE_NAME} 服务启动成功！${NC}"
+        echo -e "${GREEN}[✓] ${SERVICE_NAME} 服务启动成功 (127.0.0.1:$APP_PORT)！${NC}"
     else
         echo -e "${RED}[ERROR] 服务启动失败，请检查日志: journalctl -u ${SERVICE_NAME} -n 20${NC}"
         exit 1
     fi
 }
 
-# 配置 Nginx 与 HTTPS (SSL)
+# 配置 Nginx 与 HTTPS (支持自定义端口与复用证书)
 setup_nginx_ssl() {
     echo -e "${BLUE}[5/5] 配置 Nginx 反向代理与 SSL 证书...${NC}"
 
-    read -r -p "是否绑定域名并配置 HTTPS (SSL)？(y/n, 默认: y): " USE_DOMAIN
-    USE_DOMAIN=${USE_DOMAIN:-y}
-
+    APP_PORT=$(grep "^PORT=" "$APP_DIR/.env" | cut -d '=' -f2)
+    APP_PORT=${APP_PORT:-8000}
     PUBLIC_IP=$(curl -s4 ifconfig.me || curl -s4 icanhazip.com || echo "your-server-ip")
 
-    if [[ "$USE_DOMAIN" =~ ^[Yy]$ ]]; then
-        read -r -p "请输入您的域名 (例如 marksix.yourdomain.com): " DOMAIN_NAME
+    read -r -p "是否需要配置 HTTPS (SSL) 加密访问？(y/n, 默认: y): " USE_HTTPS
+    USE_HTTPS=${USE_HTTPS:-y}
+
+    if [[ "$USE_HTTPS" =~ ^[Yy]$ ]]; then
+        # 检测 443 端口是否已被别的服务(如 cdn-cf-optimizer)占用
+        DEFAULT_HTTPS_PORT=443
+        if is_port_in_use 443; then
+            echo -e "${YELLOW}[!] 检测到服务器 443 端口已被占用 (如 cdn-cf-optimizer / 现有 Web 服务)！${NC}"
+            echo -e "${CYAN}建议为六合彩看板分配独立 HTTPS 端口 (如 8443、9443 等)${NC}"
+            DEFAULT_HTTPS_PORT=8443
+        fi
+
+        read -r -p "请输入六合彩 HTTPS 监听端口 (默认: $DEFAULT_HTTPS_PORT): " HTTPS_PORT
+        HTTPS_PORT=${HTTPS_PORT:-$DEFAULT_HTTPS_PORT}
+
+        read -r -p "请输入访问域名 (如 m6.yourdomain.com 或原 cdn 域名): " DOMAIN_NAME
         while [ -z "$DOMAIN_NAME" ]; do
             read -r -p "域名不能为空，请重新输入: " DOMAIN_NAME
         done
 
-        # 临时创建 HTTP 验证配置
+        echo ""
+        echo -e "${CYAN}请选择 SSL 证书获取方式：${NC}"
+        echo -e "  ${BOLD}1)${NC} 复用服务器已有的证书 (如 cdn-cf-optimizer 的证书文件) ${GREEN}[推荐]${NC}"
+        echo -e "  ${BOLD}2)${NC} 使用 Certbot 全自动申请全新 Let's Encrypt 证书"
+        read -r -p "请输入选项 (1 或 2, 默认: 1): " CERT_MODE
+        CERT_MODE=${CERT_MODE:-1}
+
+        SSL_CERT=""
+        SSL_KEY=""
+
+        if [ "$CERT_MODE" = "1" ]; then
+            echo -e "${YELLOW}请提供已有证书与私钥路径 (以 .pem 或 .crt 结尾)：${NC}"
+            DETECTED_CERT=$(ls -t /etc/letsencrypt/live/*/fullchain.pem 2>/dev/null | head -1 || true)
+            DETECTED_KEY=$(ls -t /etc/letsencrypt/live/*/privkey.pem 2>/dev/null | head -1 || true)
+
+            read -r -p "SSL 证书路径 fullchain.pem (默认: ${DETECTED_CERT:-/etc/letsencrypt/live/yourdomain/fullchain.pem}): " SSL_CERT
+            SSL_CERT=${SSL_CERT:-$DETECTED_CERT}
+
+            read -r -p "SSL 私钥路径 privkey.pem (默认: ${DETECTED_KEY:-/etc/letsencrypt/live/yourdomain/privkey.pem}): " SSL_KEY
+            SSL_KEY=${SSL_KEY:-$DETECTED_KEY}
+
+            while [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; do
+                echo -e "${RED}[ERROR] 指定的证书文件或私钥不存在，请重新输入！${NC}"
+                read -r -p "SSL 证书路径: " SSL_CERT
+                read -r -p "SSL 私钥路径: " SSL_KEY
+            done
+            echo -e "${GREEN}[✓] 已成功载入现有证书: $SSL_CERT${NC}"
+        else
+            echo -e "${CYAN}正在调用 Certbot 申请证书...${NC}"
+            read -r -p "请输入告警通知邮箱 (直接回车跳过): " USER_EMAIL
+            if [ -n "$USER_EMAIL" ]; then
+                certbot certonly --standalone -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "$USER_EMAIL" || true
+            else
+                certbot certonly --standalone -d "$DOMAIN_NAME" --non-interactive --agree-tos --register-unsafely-without-email || true
+            fi
+            SSL_CERT="/etc/letsencrypt/live/$DOMAIN_NAME/fullchain.pem"
+            SSL_KEY="/etc/letsencrypt/live/$DOMAIN_NAME/privkey.pem"
+        fi
+
+        # 写入 Nginx 配置
         NGINX_CONF="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
         [ -d /etc/nginx/sites-available ] && NGINX_CONF="/etc/nginx/sites-available/${SERVICE_NAME}.conf"
 
         cat <<EOF > "$NGINX_CONF"
+# 香港六合彩 (Mark Six) Nginx 反向代理配置 (独立端口 HTTPS)
 server {
-    listen 80;
-    listen [::]:80;
+    listen $HTTPS_PORT ssl http2;
+    listen [::]:$HTTPS_PORT ssl http2;
     server_name $DOMAIN_NAME;
 
+    # SSL 证书配置 (复用已有证书)
+    ssl_certificate $SSL_CERT;
+    ssl_certificate_key $SSL_KEY;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+
+    # 安全响应头
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+
+    # 开启 Gzip
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml;
+
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -204,83 +301,82 @@ server {
 EOF
         if [ -d /etc/nginx/sites-enabled ]; then
             ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/${SERVICE_NAME}.conf"
-            # 移除默认 default 站点防止冲突
-            rm -f /etc/nginx/sites-enabled/default
         fi
 
         nginx -t && systemctl reload nginx
 
-        echo -e "${CYAN}正在通过 Let's Encrypt / Certbot 申请并配置 SSL 证书...${NC}"
-        read -r -p "请输入用于证书接收告警的邮箱 (可直接回车跳过): " USER_EMAIL
+        PORT_SUFFIX=""
+        [ "$HTTPS_PORT" != "443" ] && PORT_SUFFIX=":$HTTPS_PORT"
+        FINAL_URL="https://${DOMAIN_NAME}${PORT_SUFFIX}"
 
-        if [ -n "$USER_EMAIL" ]; then
-            certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos -m "$USER_EMAIL" --redirect || true
-        else
-            certbot --nginx -d "$DOMAIN_NAME" --non-interactive --agree-tos --register-unsafely-without-email --redirect || true
+        if [ "$HTTPS_PORT" != "443" ]; then
+            if command -v ufw >/dev/null 2>&1 && ufw status | grep -q active; then
+                ufw allow "$HTTPS_PORT"/tcp || true
+            elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+                firewall-cmd --permanent --add-port="$HTTPS_PORT"/tcp || true
+                firewall-cmd --reload || true
+            fi
+            echo -e "${YELLOW}⚠️ 重要提示：若使用的云服务器（如 Oracle Cloud 甲骨文、阿里云、腾讯云等），请务必在控制台【安全组/安全列表】中添加入站规则放行 TCP $HTTPS_PORT 端口！${NC}"
         fi
 
-        nginx -t && systemctl reload nginx
-        FINAL_URL="https://$DOMAIN_NAME"
     else
-        # 仅 IP 模式 (HTTP 80)
+        read -r -p "请输入对外 HTTP 监听端口 (默认: 8080): " HTTP_PORT
+        HTTP_PORT=${HTTP_PORT:-8080}
+
         NGINX_CONF="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
         [ -d /etc/nginx/sites-available ] && NGINX_CONF="/etc/nginx/sites-available/${SERVICE_NAME}.conf"
 
         cat <<EOF > "$NGINX_CONF"
 server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
+    listen $HTTP_PORT;
+    listen [::]:$HTTP_PORT;
     server_name _;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
     }
 }
 EOF
         if [ -d /etc/nginx/sites-enabled ]; then
             ln -sf "$NGINX_CONF" "/etc/nginx/sites-enabled/${SERVICE_NAME}.conf"
-            rm -f /etc/nginx/sites-enabled/default
         fi
 
         nginx -t && systemctl reload nginx
-        FINAL_URL="http://$PUBLIC_IP"
+        FINAL_URL="http://${PUBLIC_IP}:${HTTP_PORT}"
     fi
 
-    echo -e "${GREEN}[✓] Nginx 反向代理配置完成！${NC}"
+    echo -e "${GREEN}[✓] Nginx 代理配置完成！${NC}"
 }
 
 # 部署完成报告
 show_summary() {
-    # 从 .env 读取账号密码
     USER=$(grep "^AUTH_USERNAME=" "$APP_DIR/.env" | cut -d '=' -f2)
     PASS=$(grep "^AUTH_PASSWORD=" "$APP_DIR/.env" | cut -d '=' -f2)
+    APP_PORT=$(grep "^PORT=" "$APP_DIR/.env" | cut -d '=' -f2)
 
     echo ""
     echo -e "${GREEN}${BOLD}==========================================================${NC}"
     echo -e "${GREEN}${BOLD}🎉 香港六合彩 (Mark Six) 个人即时看板与选号工具 部署成功！${NC}"
     echo -e "${GREEN}${BOLD}==========================================================${NC}"
-    echo -e "🌐 访问地址: ${CYAN}${BOLD}${FINAL_URL:-http://$PUBLIC_IP}${NC}"
+    echo -e "🌐 访问地址: ${CYAN}${BOLD}${FINAL_URL}${NC}"
     echo -e "👤 登录账号: ${YELLOW}${BOLD}${USER}${NC}"
     echo -e "🔑 登录密码: ${YELLOW}${BOLD}${PASS}${NC}"
-    echo -e "📌 本地服务端口: ${BOLD}127.0.0.1:8000${NC}"
+    echo -e "📌 本地后端端口: ${BOLD}127.0.0.1:${APP_PORT:-8000}${NC}"
     echo ""
     echo -e "${BOLD}常用系统维护命令：${NC}"
-    echo -e "  • 重启服务:   ${CYAN}sudo systemctl restart ${SERVICE_NAME}${NC}"
-    echo -e "  • 停止服务:   ${CYAN}sudo systemctl stop ${SERVICE_NAME}${NC}"
-    echo -e "  • 查看状态:   ${CYAN}sudo systemctl status ${SERVICE_NAME}${NC}"
+    echo -e "  • 重启服务:     ${CYAN}sudo systemctl restart ${SERVICE_NAME}${NC}"
+    echo -e "  • 停止服务:     ${CYAN}sudo systemctl stop ${SERVICE_NAME}${NC}"
+    echo -e "  • 查看状态:     ${CYAN}sudo systemctl status ${SERVICE_NAME}${NC}"
     echo -e "  • 查看实时日志: ${CYAN}sudo journalctl -u ${SERVICE_NAME} -f${NC}"
     echo -e "  • 更新最新代码: ${CYAN}sudo bash deploy.sh update${NC}"
     echo -e "${GREEN}${BOLD}==========================================================${NC}"
 }
 
-# 子命令分支
 cmd_update() {
     check_root
     echo -e "${BLUE}[*] 正在从 Git 仓库拉取最新代码...${NC}"
@@ -318,7 +414,7 @@ cmd_docker() {
     fi
     setup_env
     docker compose up -d --build
-    echo -e "${GREEN}[✓] Docker 容器已启动在端口 8000！${NC}"
+    echo -e "${GREEN}[✓] Docker 容器已启动！${NC}"
 }
 
 # 主执行入口

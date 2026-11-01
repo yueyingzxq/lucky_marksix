@@ -1,0 +1,16 @@
+[Unit]
+Description=Hong Kong Mark Six Dashboard & True Random Generator Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# 请修改为您的实际部署目录
+WorkingDirectory=/var/www/marksix-hub
+ExecStart=/var/www/marksix-hub/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=3
+EnvironmentFile=/var/www/marksix-hub/.env
+
+[Install]
+WantedBy=multi-user.target

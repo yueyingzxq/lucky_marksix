@@ -197,7 +197,7 @@
     </div>
   </header>
 
-  <!-- 主体容器 -->
+  <!-- 主体容器 (保持清爽紧凑，历史记录均以弹窗形式呼出) -->
   <main class="relative z-10 max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-6">
 
     <!-- 卡片 1: 下期搅珠大盘看板 (对应官网自选单式) -->
@@ -262,14 +262,19 @@
       </div>
     </section>
 
-    <!-- 卡片 2: 上期搅珠详情与派彩明细 (对应官网第一张图) -->
+    <!-- 卡片 2: 上期搅珠详情 (带有「查看往期历史」弹窗入口按钮) -->
     <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
       <div class="border-b border-slate-800/80 pb-3 sm:pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-        <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
           <div class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></div>
           <h2 class="text-sm sm:text-lg font-bold text-white flex items-center gap-2">
             上期搅珠详情 <span id="pastDrawHeaderBadge" class="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">--/--- 期</span>
           </h2>
+          <!-- 需求 1: 放置在上期搅珠情况xxx期的右边，点击后弹窗查看历史数据 -->
+          <button onclick="openHistoryModal()" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1 py-1 px-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 active:scale-95 transition-all shadow-sm">
+            <span>📜</span>
+            <span class="font-medium">查看往期历史</span>
+          </button>
         </div>
         <div class="flex items-center space-x-3 text-xs text-slate-400">
           <span>搅珠日期: <strong id="pastDrawDateVal" class="text-slate-200 font-mono">--</strong></span>
@@ -311,7 +316,7 @@
       </div>
     </section>
 
-    <!-- 卡片 3 (提前): 🎲 真随机选号控制台与选号结果 -->
+    <!-- 卡片 3: 🎲 真随机选号控制台与选号结果 (注数选择/生成/复制/设为固定) -->
     <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
       <div class="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/80">
         <div class="flex items-center space-x-2">
@@ -378,9 +383,9 @@
       </div>
     </section>
 
-    <!-- 卡片 4 (新增核心): 📌 管理员固定号码每期下注 -->
+    <!-- 卡片 4: 📌 管理员固定号码每期下注 (带有「固定模拟历史」弹窗入口按钮) -->
     <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
-      <div class="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/80">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-4 border-b border-slate-800/80">
         <div class="flex items-center space-x-2">
           <span class="text-base sm:text-lg">📌</span>
           <div>
@@ -390,35 +395,44 @@
             <p class="text-[11px] text-slate-400">设定多注固定号码，每期开奖自动追投（$10/注）并计算官方中奖派彩</p>
           </div>
         </div>
-        <button onclick="openAddFixedModal()" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1.5 py-1.5 px-3 rounded-lg bg-amber-500/10 border border-amber-500/30 active:scale-95 transition-all shadow-sm">
-          <span>➕</span>
-          <span class="font-bold">添加固定号码</span>
-        </button>
+
+        <div class="flex items-center space-x-2 flex-shrink-0">
+          <!-- 需求 3: 固定号码历史模拟情况收纳起来，放到添加固定号码左边的按钮进入 -->
+          <button onclick="openFixedHistoryModal()" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1.5 py-1.5 px-3 rounded-lg bg-amber-500/10 border border-amber-500/30 active:scale-95 transition-all shadow-sm">
+            <span>📜</span>
+            <span class="font-bold">固定模拟历史</span>
+          </button>
+          <button onclick="openAddFixedModal()" class="text-xs text-white hover:text-amber-300 flex items-center space-x-1.5 py-1.5 px-3 rounded-lg bg-amber-500/20 border border-amber-500/40 active:scale-95 transition-all shadow-sm font-bold">
+            <span>➕</span>
+            <span>添加固定号码</span>
+          </button>
+        </div>
       </div>
 
       <!-- 固定号码卡片列表 -->
       <div id="fixedBetsContainer" class="pt-4 space-y-3">
-        <!-- 动态装载固定号码 -->
         <div class="py-6 text-center text-slate-500 text-xs">加载固定号码中...</div>
       </div>
     </section>
 
-    <!-- 卡片 5 (新增核心): 🎲 随机模拟每期下注 (开关与策略) -->
+    <!-- 卡片 5: 🎲 随机模拟每期下注 (带有「随机模拟历史」弹窗入口按钮) -->
     <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-4 border-b border-slate-800/80">
         <div class="flex items-center space-x-2">
           <span class="text-base sm:text-lg">🎲</span>
           <div>
             <h2 class="text-sm sm:text-lg font-bold text-white flex items-center gap-1.5">
-              随机模拟每期下注 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(自动化策略)</span>
+              随机模拟每期下注 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(碰运气策略)</span>
             </h2>
             <p class="text-[11px] text-slate-400">系统每期自动生成 1 注物理真随机号码（$10/注），自动对决并记录中奖走势</p>
           </div>
         </div>
 
-        <div class="flex items-center space-x-2">
-          <button onclick="rerunRandomSimulation()" id="rerunRandomBtn" class="text-xs text-slate-300 hover:text-white py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700/60 active:scale-95 transition-all">
-            🎲 重新随机模拟
+        <div class="flex items-center space-x-2 flex-shrink-0">
+          <!-- 需求 2: 随机模拟的历史情况收纳起来放到开启随机模拟下注的开关左边 -->
+          <button onclick="openRandomHistoryModal()" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1.5 py-1.5 px-3 rounded-lg bg-amber-500/10 border border-amber-500/30 active:scale-95 transition-all shadow-sm">
+            <span>📜</span>
+            <span class="font-bold">随机模拟历史</span>
           </button>
           <button onclick="toggleRandomSimulation()" id="randomSimToggleBtn" class="text-xs font-bold py-1.5 px-3 rounded-lg border transition-all active:scale-95 bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
             已开启自动下注
@@ -447,7 +461,7 @@
       </div>
     </section>
 
-    <!-- 卡片 6 (新增核心): 📊 模拟下注盈亏与综合战报 -->
+    <!-- 卡片 6: 📊 模拟下注盈亏与综合战报 -->
     <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
       <div class="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/80">
         <div class="flex items-center space-x-2">
@@ -504,59 +518,118 @@
       </div>
     </section>
 
-    <!-- 卡片 7 (排版置底): 📝 历史模拟下注记录明细流水 -->
-    <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 sm:pb-4 border-b border-slate-800/80">
-        <div class="flex items-center space-x-2">
-          <span class="text-base sm:text-lg">📝</span>
-          <div>
-            <h2 class="text-sm sm:text-lg font-bold text-white flex items-center gap-1.5">
-              模拟下注历史记录明细 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(对奖与中奖流水)</span>
-            </h2>
-            <p class="text-[11px] text-slate-400">高亮显示每注命中的正码与特别号，核对每期派彩与净盈亏</p>
-          </div>
-        </div>
-
-        <!-- 筛选与操作 -->
-        <div class="flex items-center space-x-1.5 overflow-x-auto">
-          <button onclick="filterSimulationRecords('all')" id="filterBtn-all" class="sim-filter-btn px-2.5 py-1 text-xs rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 transition-all font-medium">全部</button>
-          <button onclick="filterSimulationRecords('fixed')" id="filterBtn-fixed" class="sim-filter-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-400 border border-slate-700/60 transition-all">固定号码</button>
-          <button onclick="filterSimulationRecords('random')" id="filterBtn-random" class="sim-filter-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-400 border border-slate-700/60 transition-all">随机模拟</button>
-          <button onclick="filterSimulationRecords('won')" id="filterBtn-won" class="sim-filter-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-400 border border-slate-700/60 transition-all">🎯 仅看中奖</button>
-        </div>
-      </div>
-
-      <!-- 历史下注流水列表容器 -->
-      <div id="simulationRecordsContainer" class="pt-4 space-y-3">
-        <div class="py-8 text-center text-slate-500 text-xs">加载历史下注记录中...</div>
-      </div>
-    </section>
-
-    <!-- 卡片 8 (排版置底): 📜 往期搅珠历史 (近 10 期官方记录走势) -->
-    <section class="glass-card rounded-2xl p-4 sm:p-7 relative overflow-hidden">
-      <div class="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800/80">
-        <div class="flex items-center space-x-2">
-          <span class="text-base sm:text-lg">📜</span>
-          <h2 class="text-sm sm:text-lg font-bold text-white flex items-center gap-1.5">
-            往期搅珠历史 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(近 10 期官方开奖档案)</span>
-          </h2>
-        </div>
-        <!-- 全部展开/全部收起主控制按钮 -->
-        <button onclick="toggleAllHistoryPrizes()" id="masterToggleHistoryBtn" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1 py-1 px-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 active:scale-95 transition-all">
-          <span id="masterToggleHistoryText">全部展开明细</span>
-          <svg id="masterToggleHistoryIcon" class="w-3.5 h-3.5 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-        </button>
-      </div>
-
-      <!-- 历史开奖列表容器：默认展示各期紧凑行，派彩表格默认折叠 -->
-      <div id="historyContainer" class="mt-4 space-y-3">
-        <!-- 动态装载历史 10 期记录与折叠派彩 -->
-      </div>
-    </section>
-
   </main>
 
-  <!-- 添加固定号码弹窗 (Modal) -->
+  <!-- ============================================================== -->
+  <!-- 弹窗组件 1: 往期搅珠历史档案弹窗 (点击 Card 2 按钮进入) -->
+  <!-- ============================================================== -->
+  <div id="historyModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <div class="glass-card max-w-4xl w-full max-h-[90vh] rounded-2xl p-4 sm:p-6 flex flex-col border border-slate-700/80 shadow-2xl my-auto">
+      <div class="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-800 flex-shrink-0">
+        <div class="flex items-center space-x-2">
+          <span class="text-lg">📜</span>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-1.5">
+              往期搅珠历史档案 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(近 10 期记录)</span>
+            </h3>
+            <p class="text-[11px] text-slate-400">点击任意一期可展开/收起马会官方头奖至七奖派彩详情</p>
+          </div>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button onclick="toggleAllHistoryPrizes()" id="masterToggleHistoryBtn" class="text-xs text-amber-400 hover:text-amber-300 flex items-center space-x-1 py-1 px-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 active:scale-95 transition-all">
+            <span id="masterToggleHistoryText">全部展开明细</span>
+            <svg id="masterToggleHistoryIcon" class="w-3.5 h-3.5 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+          </button>
+          <button onclick="closeHistoryModal()" class="text-slate-400 hover:text-white p-1 rounded-lg text-lg">✕</button>
+        </div>
+      </div>
+
+      <!-- 历史开奖列表容器 -->
+      <div id="historyContainer" class="overflow-y-auto py-3 space-y-3 flex-1 pr-1">
+        <!-- 动态装载历史 10 期记录与折叠派彩 -->
+      </div>
+
+      <div class="pt-3 border-t border-slate-800 flex justify-end flex-shrink-0">
+        <button onclick="closeHistoryModal()" class="px-4 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 border border-slate-700">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- 弹窗组件 2: 固定号码模拟历史明细弹窗 (点击 Card 4 按钮进入) -->
+  <!-- ============================================================== -->
+  <div id="fixedHistoryModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <div class="glass-card max-w-4xl w-full max-h-[90vh] rounded-2xl p-4 sm:p-6 flex flex-col border border-slate-700/80 shadow-2xl my-auto">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 sm:pb-4 border-b border-slate-800 gap-2.5 flex-shrink-0">
+        <div class="flex items-center space-x-2">
+          <span class="text-lg">📌</span>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-1.5">
+              固定号码模拟历史明细 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(对奖与中奖流水)</span>
+            </h3>
+            <p class="text-[11px] text-slate-400">记录所有心水固定号码每期的对奖情况、命中球高亮及派彩净收益</p>
+          </div>
+        </div>
+        <div class="flex items-center space-x-2">
+          <div class="flex items-center space-x-1">
+            <button onclick="filterFixedHistory('all')" id="fixedFilterBtn-all" class="fixed-filter-btn px-2.5 py-1 text-xs rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 font-medium">全部</button>
+            <button onclick="filterFixedHistory('won')" id="fixedFilterBtn-won" class="fixed-filter-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-400 border border-slate-700/60">🎯 仅看中奖</button>
+          </div>
+          <button onclick="closeFixedHistoryModal()" class="text-slate-400 hover:text-white p-1 rounded-lg text-lg">✕</button>
+        </div>
+      </div>
+
+      <!-- 固定号码流水列表容器 -->
+      <div id="fixedHistoryContainer" class="overflow-y-auto py-3 space-y-3 flex-1 pr-1">
+        <div class="py-8 text-center text-slate-500 text-xs">加载固定号码历史对奖记录中...</div>
+      </div>
+
+      <div class="pt-3 border-t border-slate-800 flex justify-between items-center flex-shrink-0">
+        <span id="fixedHistoryCountBadge" class="text-xs text-slate-400">共 0 条固定模拟记录</span>
+        <button onclick="closeFixedHistoryModal()" class="px-4 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 border border-slate-700">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- 弹窗组件 3: 随机模拟历史记录明细弹窗 (点击 Card 5 按钮进入) -->
+  <!-- ============================================================== -->
+  <div id="randomHistoryModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <div class="glass-card max-w-4xl w-full max-h-[90vh] rounded-2xl p-4 sm:p-6 flex flex-col border border-slate-700/80 shadow-2xl my-auto">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 sm:pb-4 border-b border-slate-800 gap-2.5 flex-shrink-0">
+        <div class="flex items-center space-x-2">
+          <span class="text-lg">🎲</span>
+          <div>
+            <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-1.5">
+              随机模拟历史记录 <span class="text-[11px] sm:text-xs text-slate-400 font-normal">(碰运气策略对奖)</span>
+            </h3>
+            <p class="text-[11px] text-slate-400">系统每期物理真随机抽取 1 注对决官方开奖结果，记录真实走势</p>
+          </div>
+        </div>
+        <div class="flex items-center space-x-2">
+          <div class="flex items-center space-x-1">
+            <button onclick="filterRandomHistory('all')" id="randomFilterBtn-all" class="random-filter-btn px-2.5 py-1 text-xs rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 font-medium">全部</button>
+            <button onclick="filterRandomHistory('won')" id="randomFilterBtn-won" class="random-filter-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-400 border border-slate-700/60">🎯 仅看中奖</button>
+          </div>
+          <button onclick="closeRandomHistoryModal()" class="text-slate-400 hover:text-white p-1 rounded-lg text-lg">✕</button>
+        </div>
+      </div>
+
+      <!-- 随机模拟流水列表容器 -->
+      <div id="randomHistoryContainer" class="overflow-y-auto py-3 space-y-3 flex-1 pr-1">
+        <div class="py-8 text-center text-slate-500 text-xs">加载随机模拟历史记录中...</div>
+      </div>
+
+      <div class="pt-3 border-t border-slate-800 flex justify-between items-center flex-shrink-0">
+        <span id="randomHistoryCountBadge" class="text-xs text-slate-400">共 0 条随机模拟记录</span>
+        <button onclick="closeRandomHistoryModal()" class="px-4 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 border border-slate-700">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- 弹窗组件 4: 添加固定号码弹窗 (点击 Card 4 添加按钮进入) -->
+  <!-- ============================================================== -->
   <div id="addFixedModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
     <div class="glass-card max-w-lg w-full rounded-2xl p-5 sm:p-6 space-y-4 border border-slate-700/80 shadow-2xl my-auto">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -605,7 +678,9 @@
     </div>
   </div>
 
+  <!-- ============================================================== -->
   <!-- 登录弹窗 (Modal) -->
+  <!-- ============================================================== -->
   <div id="loginModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md">
     <div class="glass-card max-w-sm w-full rounded-2xl p-5 sm:p-6 space-y-4 border border-slate-700/80 shadow-2xl">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -656,8 +731,10 @@
       betCount: 3,
       historyData: [],
       fixedBets: [],
-      simulationRecords: [],
-      activeRecordFilter: 'all',
+      fixedRecords: [],
+      randomRecords: [],
+      activeFixedFilter: 'all',
+      activeRandomFilter: 'all',
       selectedNumbers: new Set()
     };
 
@@ -809,14 +886,14 @@
 
         rowsHtml += `
           <tr class="hover:bg-slate-800/40 transition-colors">
-            <td class="py-2 px-3 sm:px-4">
+            <td class="py-2.5 px-3 sm:px-4">
               <span class="${nameBadgeColor} flex items-center gap-1.5">
                 ${isTop3 ? '<span class="text-amber-400 text-xs">★</span>' : ''}
                 ${p.name}
               </span>
             </td>
-            <td class="py-2 px-3 sm:px-4 ${dividendColor}">${p.dividend}</td>
-            <td class="py-2 px-3 sm:px-4 text-right ${unitsColor}">${p.winning_units}</td>
+            <td class="py-2.5 px-3 sm:px-4 ${dividendColor}">${p.dividend}</td>
+            <td class="py-2.5 px-3 sm:px-4 text-right ${unitsColor}">${p.winning_units}</td>
           </tr>
         `;
       });
@@ -826,9 +903,9 @@
           <table class="w-full text-left text-xs sm:text-sm">
             <thead>
               <tr class="border-b border-slate-800/80 bg-slate-950/40 text-[11px] sm:text-xs text-slate-400 uppercase tracking-wider font-semibold">
-                <th class="py-2 px-3 sm:px-4">奖项</th>
-                <th class="py-2 px-3 sm:px-4">每注奖金 (每注 $10)</th>
-                <th class="py-2 px-3 sm:px-4 text-right">中奖注数</th>
+                <th class="py-2.5 px-3 sm:px-4">奖项</th>
+                <th class="py-2.5 px-3 sm:px-4">每注奖金 (每注 $10)</th>
+                <th class="py-2.5 px-3 sm:px-4 text-right">中奖注数</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60 font-mono">
@@ -916,7 +993,7 @@
             prizesBody.innerHTML = rowsHtml;
           }
 
-          // 渲染往期 10 期历史列表
+          // 保存往期 10 期历史列表供弹窗使用
           if (d.history && d.history.length > 0) {
             state.historyData = d.history;
             renderHistoryList(d.history);
@@ -934,9 +1011,10 @@
       }
     }
 
-    // 渲染往期 10 期历史列表
+    // 渲染弹窗中的往期 10 期历史列表
     function renderHistoryList(history) {
       const container = document.getElementById('historyContainer');
+      if (!container) return;
       let html = '';
 
       history.forEach((item, index) => {
@@ -1043,6 +1121,18 @@
         if (isMasterHistoryExpanded) masterIcon.classList.add('rotate-180');
         else masterIcon.classList.remove('rotate-180');
       }
+    }
+
+    // 往期历史弹窗控制
+    function openHistoryModal() {
+      if (state.historyData && state.historyData.length > 0) {
+        renderHistoryList(state.historyData);
+      }
+      document.getElementById('historyModal').classList.remove('hidden');
+    }
+
+    function closeHistoryModal() {
+      document.getElementById('historyModal').classList.add('hidden');
     }
 
     // ==========================================
@@ -1202,7 +1292,8 @@
         await Promise.all([
           loadSimulationSummary(),
           loadFixedBets(),
-          loadSimulationRecords()
+          loadFixedRecords(),
+          loadRandomRecords()
         ]);
       } catch (err) {
         console.error('加载模拟下注数据异常:', err);
@@ -1250,7 +1341,6 @@
             randBtn.className = 'text-xs font-bold py-1.5 px-3 rounded-lg border transition-all active:scale-95 bg-slate-800 text-slate-400 border-slate-700/60';
           }
 
-          // 奖项分布徽章渲染
           renderPrizeDistribution(s.prize_distribution);
         }
       } catch (err) {
@@ -1390,67 +1480,98 @@
       }
     }
 
-    async function rerunRandomSimulation() {
-      const btn = document.getElementById('rerunRandomBtn');
-      btn.disabled = true;
-      btn.innerText = '运算中...';
+    // ==============================================================
+    // 弹窗组件：固定模拟历史流水与随机模拟历史流水加载与渲染
+    // ==============================================================
+    async function loadFixedRecords() {
       try {
-        const res = await apiRequest('/api/simulation/random/re-run', { method: 'POST' });
-        showToast(res.message || '已重新生成历史随机模拟！', 'success');
-        loadSimulationData();
-      } catch (err) {
-        showToast(err.message || '重跑失败', 'error');
-      } finally {
-        btn.disabled = false;
-        btn.innerText = '🎲 重新随机模拟';
-      }
-    }
-
-    // ==========================================
-    // 历史下注流水记录明细 (置底)
-    // ==========================================
-    async function loadSimulationRecords() {
-      try {
-        const url = `/api/simulation/records?bet_type=all&limit=100`;
-        const res = await apiRequest(url);
+        const res = await apiRequest('/api/simulation/records?bet_type=fixed&limit=200');
         if (res && res.data) {
-          state.simulationRecords = res.data;
-          renderSimulationRecords(res.data, state.activeRecordFilter);
+          state.fixedRecords = res.data;
+          renderRecordsList(res.data, 'fixedHistoryContainer', 'fixedHistoryCountBadge', state.activeFixedFilter);
         }
       } catch (err) {
-        console.error('加载模拟记录明细失败:', err);
+        console.error('加载固定号码流水失败:', err);
       }
     }
 
-    function filterSimulationRecords(filter) {
-      state.activeRecordFilter = filter;
-      document.querySelectorAll('.sim-filter-btn').forEach(btn => {
+    async function loadRandomRecords() {
+      try {
+        const res = await apiRequest('/api/simulation/records?bet_type=random&limit=200');
+        if (res && res.data) {
+          state.randomRecords = res.data;
+          renderRecordsList(res.data, 'randomHistoryContainer', 'randomHistoryCountBadge', state.activeRandomFilter);
+        }
+      } catch (err) {
+        console.error('加载随机模拟流水失败:', err);
+      }
+    }
+
+    function openFixedHistoryModal() {
+      loadFixedRecords();
+      document.getElementById('fixedHistoryModal').classList.remove('hidden');
+    }
+
+    function closeFixedHistoryModal() {
+      document.getElementById('fixedHistoryModal').classList.add('hidden');
+    }
+
+    function openRandomHistoryModal() {
+      loadRandomRecords();
+      document.getElementById('randomHistoryModal').classList.remove('hidden');
+    }
+
+    function closeRandomHistoryModal() {
+      document.getElementById('randomHistoryModal').classList.add('hidden');
+    }
+
+    function filterFixedHistory(filter) {
+      state.activeFixedFilter = filter;
+      document.querySelectorAll('.fixed-filter-btn').forEach(btn => {
         btn.classList.remove('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40', 'font-medium');
         btn.classList.add('bg-slate-800', 'text-slate-400', 'border-slate-700/60');
       });
-      const activeBtn = document.getElementById(`filterBtn-${filter}`);
+      const activeBtn = document.getElementById(`fixedFilterBtn-${filter}`);
       if (activeBtn) {
         activeBtn.classList.add('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40', 'font-medium');
         activeBtn.classList.remove('bg-slate-800', 'text-slate-400', 'border-slate-700/60');
       }
-      renderSimulationRecords(state.simulationRecords, filter);
+      renderRecordsList(state.fixedRecords, 'fixedHistoryContainer', 'fixedHistoryCountBadge', filter);
     }
 
-    function renderSimulationRecords(records, filter = 'all') {
-      const container = document.getElementById('simulationRecordsContainer');
+    function filterRandomHistory(filter) {
+      state.activeRandomFilter = filter;
+      document.querySelectorAll('.random-filter-btn').forEach(btn => {
+        btn.classList.remove('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40', 'font-medium');
+        btn.classList.add('bg-slate-800', 'text-slate-400', 'border-slate-700/60');
+      });
+      const activeBtn = document.getElementById(`randomFilterBtn-${filter}`);
+      if (activeBtn) {
+        activeBtn.classList.add('bg-amber-500/20', 'text-amber-300', 'border-amber-500/40', 'font-medium');
+        activeBtn.classList.remove('bg-slate-800', 'text-slate-400', 'border-slate-700/60');
+      }
+      renderRecordsList(state.randomRecords, 'randomHistoryContainer', 'randomHistoryCountBadge', filter);
+    }
+
+    // 通用流水卡片列表渲染函数
+    function renderRecordsList(records, containerId, countBadgeId, filter = 'all') {
+      const container = document.getElementById(containerId);
+      const countBadge = document.getElementById(countBadgeId);
+      if (!container) return;
+
       let filtered = records;
-      if (filter === 'fixed') {
-        filtered = records.filter(r => r.bet_type === 'fixed');
-      } else if (filter === 'random') {
-        filtered = records.filter(r => r.bet_type === 'random');
-      } else if (filter === 'won') {
+      if (filter === 'won') {
         filtered = records.filter(r => r.prize_type > 0);
+      }
+
+      if (countBadge) {
+        countBadge.innerText = `展示 ${filtered.length} / 共 ${records.length} 条记录`;
       }
 
       if (!filtered || filtered.length === 0) {
         container.innerHTML = `
-          <div class="py-8 text-center text-slate-500 text-xs">
-            暂无对应的模拟下注记录，请在上方添加固定号码或开启随机模拟。
+          <div class="py-12 text-center text-slate-500 text-xs">
+            暂无对应的模拟记录，将在新一期搅珠或添加号码后自动对奖。
           </div>
         `;
         return;
@@ -1462,16 +1583,11 @@
         const prizeBadge = isWon 
           ? `<span class="px-2 py-0.5 rounded font-bold text-xs bg-amber-500/20 text-amber-300 border border-amber-500/40">${r.prize_name} +$${r.prize_dividend.toLocaleString()}</span>`
           : `<span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-500 border border-slate-700/60">未中奖</span>`;
-        
-        const typeBadge = r.bet_type === 'fixed'
-          ? `<span class="text-[11px] font-mono px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30">📌 固定</span>`
-          : `<span class="text-[11px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">🎲 随机</span>`;
 
         const isProfitable = r.net_profit >= 0;
         const netStr = `${isProfitable ? '+' : ''}$${r.net_profit.toLocaleString()}`;
         const netColor = isProfitable ? 'text-emerald-400 font-bold' : 'text-slate-400 font-normal';
 
-        // 官方开奖迷你球号展示
         let drawBallsMiniHtml = '';
         (r.draw_balls || []).forEach(b => {
           drawBallsMiniHtml += `<div class="ball-3d ball-${b.color} !w-6 !h-6 !text-[10px]">${b.text}</div>`;
@@ -1483,13 +1599,11 @@
 
         html += `
           <div class="bg-slate-900/60 hover:bg-slate-900/90 border border-slate-800/80 rounded-xl p-3 sm:p-4 transition-all duration-200">
-            <!-- 头部期数与中奖徽章 -->
             <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/60">
               <div class="flex items-center space-x-2">
                 <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700/60">
                   第 ${r.draw_number} 期
                 </span>
-                ${typeBadge}
                 <span class="text-xs font-medium text-slate-300">${r.bet_name}</span>
                 <span class="text-[11px] text-slate-500 hidden sm:inline font-mono">${r.draw_date}</span>
               </div>
@@ -1499,7 +1613,7 @@
               </div>
             </div>
 
-            <!-- 下注球号 (命中的球立体高亮发光) -->
+            <!-- 下注球号 (命中的球高亮发光) -->
             <div class="py-1">
               <div class="text-[11px] text-slate-400 mb-1 flex items-center justify-between">
                 <span>下注号码 (金环表示命中开奖球)：</span>
@@ -1692,6 +1806,17 @@
         setTimeout(() => toast.remove(), 300);
       }, 2500);
     }
+
+    // 监听 ESC 键关闭所有弹窗
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeHistoryModal();
+        closeFixedHistoryModal();
+        closeRandomHistoryModal();
+        closeAddFixedModal();
+        closeLoginModal();
+      }
+    });
 
     window.addEventListener('DOMContentLoaded', () => {
       checkAuthStatus();

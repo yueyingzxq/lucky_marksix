@@ -1129,6 +1129,7 @@ def api_rerun_random_sim(current_user: str = Depends(verify_token)):
 def api_get_simulation_records(
     bet_type: Optional[str] = Query("all", description="筛选类型: all / fixed / random"),
     prize_filter: Optional[str] = Query("all", description="中奖筛选: all / won / miss"),
+    fixed_bet_id: Optional[int] = Query(None, description="按指定固定号码 ID 筛选"),
     limit: int = Query(100, ge=1, le=500),
     current_user: str = Depends(verify_token)
 ):
@@ -1151,6 +1152,10 @@ def api_get_simulation_records(
         if bet_type and bet_type != "all":
             query += " AND sb.bet_type = ?"
             params.append(bet_type)
+
+        if fixed_bet_id is not None:
+            query += " AND sb.fixed_bet_id = ?"
+            params.append(fixed_bet_id)
 
         if prize_filter == "won":
             query += " AND sb.prize_type > 0"
